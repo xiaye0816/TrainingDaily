@@ -23,8 +23,8 @@ final class WorkoutConfigTests: XCTestCase {
             "Light"
         )
         XCTAssertNotNil(UIImage(named: "SplashBackground"))
+        XCTAssertNotNil(UIImage(named: "SplashBrand"))
         XCTAssertNotNil(UIImage(named: "SplashGlow"))
-        XCTAssertNotNil(UIImage(named: "SplashTile"))
     }
 
     func testNormalizationClampsValuesAndDependencies() {

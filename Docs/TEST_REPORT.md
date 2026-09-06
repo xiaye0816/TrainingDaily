@@ -10,6 +10,7 @@
 - 使用 Apple Development 签名完成 iPhone 17 Pro Max / iOS 26.2.1 真机构建及覆盖安装。
 - 语音调度已验证：时间播报会打断计次，播报期间及队列中的过期计次不会补播。
 - 原生 `LaunchScreen.storyboard` 编译无错误、警告或提示；打包产物包含启动页并固定为浅色外观。
+- 原生启动页与 SwiftUI 开屏共用 `SplashBrand` 复合资源，并统一按全屏坐标居中；系统浅色、深色模式冷启动均保持浅色品牌画面，逐帧比对中交接前后主体无像素级位移、文字重影或下坠。
 - `project.pbxproj`、`PrivacyInfo.xcprivacy` 和资源目录结构校验通过。
 - App Icon 为 1024 × 1024、无 Alpha 通道。
 

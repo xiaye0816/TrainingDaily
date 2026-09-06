@@ -58,10 +58,14 @@ private struct BrandSplashView: View {
     var body: some View {
         ZStack {
             splashBackground
-            brand
-                .padding(.horizontal, 28)
+
+            Image("SplashBrand")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 317, height: 268)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("天天打卡，中小学生体测训练记录")
@@ -70,46 +74,12 @@ private struct BrandSplashView: View {
     private var splashBackground: some View {
         ZStack {
             Image("SplashBackground")
-                .resizable()
-                .scaledToFill()
+                .resizable(resizingMode: .stretch)
 
             Image("SplashGlow")
                 .resizable()
                 .frame(width: 430, height: 430)
                 .offset(x: 175, y: -245)
-        }
-        .ignoresSafeArea()
-    }
-
-    private var brand: some View {
-        VStack(spacing: 22) {
-            ZStack {
-                Image("SplashTile")
-                    .resizable()
-                    .frame(width: 132, height: 132)
-
-                Image(systemName: "figure.run")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 74, height: 74)
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 132, height: 132)
-
-            VStack(spacing: 11) {
-                Text("天天打卡")
-                    .font(.system(size: 42, weight: .bold))
-                    .foregroundStyle(Color.workoutInk)
-
-                Text("中小学生体测训练记录")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(Color(white: 0.52))
-
-                Text("每一秒，每一次，都看得见。")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Color(white: 0.65))
-            }
-            .multilineTextAlignment(.center)
         }
     }
 }
