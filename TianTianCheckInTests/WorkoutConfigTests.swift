@@ -2,6 +2,18 @@ import XCTest
 @testable import TianTianCheckIn
 
 final class WorkoutConfigTests: XCTestCase {
+    func testRootFlowStartsAtWelcomeAndCanOpenSetup() {
+        var flow = RootFlowState()
+
+        XCTAssertEqual(flow.idleScreen, .welcome)
+
+        flow.showSetup()
+        XCTAssertEqual(flow.idleScreen, .setup)
+
+        flow.showWelcome()
+        XCTAssertEqual(flow.idleScreen, .welcome)
+    }
+
     func testNormalizationClampsValuesAndDependencies() {
         var config = WorkoutConfig.default
         config.timerEnabled = false

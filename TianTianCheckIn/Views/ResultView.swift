@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ResultView: View {
     @EnvironmentObject private var session: WorkoutSessionController
+    let onReturnHome: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -37,8 +38,8 @@ struct ResultView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.large)
 
-                    Button(session.isSaved ? "完成" : "放弃并返回") {
-                        session.returnHome()
+                    Button(session.isSaved ? "完成，返回首页" : "放弃并返回首页") {
+                        onReturnHome()
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)

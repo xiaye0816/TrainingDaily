@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SetupView: View {
     @Binding var config: WorkoutConfig
+    let onBack: () -> Void
     let onStart: () -> Void
 
     private let durationOptions = [30, 60, 90, 120, 300]
@@ -26,7 +27,15 @@ struct SetupView: View {
                 .padding(.bottom, 28)
             }
             .background(Color(.systemGroupedBackground))
+            .navigationTitle("训练设置")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: onBack) {
+                        Label("首页", systemImage: "chevron.left")
+                    }
+                    .accessibilityHint("返回天天打卡首页")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("恢复默认设置", role: .destructive) {
@@ -47,7 +56,7 @@ struct SetupView: View {
                 Image(systemName: "stopwatch.fill")
                     .font(.title2)
                     .foregroundStyle(Color.workoutGreen)
-                Text("天天打卡")
+                Text("本次训练")
                     .font(.title2.bold())
             }
             Text(config.durationSeconds.clockText)
