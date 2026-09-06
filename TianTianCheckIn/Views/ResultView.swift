@@ -1,0 +1,103 @@
+import AVKit
+import SwiftUI
+
+struct ResultView: View {
+    @EnvironmentObject private var session: WorkoutSessionController
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    videoPreview
+                    summary
+
+                    if let message = session.errorMessage {
+                        Label(message, systemImage: "exclamationmark.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if session.result?.videoURL != nil {
+                        Button {
+                            session.saveResult()
+                        } label: {
+                            Label(session.isSaved ? "已保存到相册" : "保存到相册", systemImage: session.isSaved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(session.isSaved)
+                    }
+
+                    Button {
+                        session.retry()
+                    } label: {
+                        Label("重新录制", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+
+                    Button(session.isSaved ? "完成" : "放弃并返回") {
+                        session.returnHome()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+                }
+                .padding(18)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("本次完成")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    @ViewBuilder
+    private var videoPreview: some View {
+        if let url = session.result?.videoURL {
+            VideoPlayer(player: AVPlayer(url: url))
+                .aspectRatio(9 / 16, contentMode: .fit)
+                .frame(maxHeight: 460)
+                .background(.black)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Color.workoutInk)
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 72))
+                    .foregroundStyle(Color.workoutGreen)
+            }
+            .frame(height: 220)
+        }
+    }
+
+    private var summary: some View {
+        HStack(spacing: 0) {
+            resultMetric(
+                title: "时长",
+                value: Int(session.result?.duration ?? 0).clockText
+            )
+            Divider().frame(height: 52)
+            resultMetric(
+                title: "次数",
+                value: "\(session.result?.count ?? 0)"
+            )
+        }
+        .padding(.vertical, 18)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private func resultMetric(title: String, value: String) -> some View {
+        VStack(spacing: 5) {
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.title, design: .rounded, weight: .bold))
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity)
+    }
+}

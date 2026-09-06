@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Xcode user state and build products
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.xccheckout
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Local secrets
+*.p8
+*.mobileprovision

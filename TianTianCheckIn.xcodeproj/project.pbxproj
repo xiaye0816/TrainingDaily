@@ -1,0 +1,514 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10100000000000000000001 /* TianTianCheckInApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10100000000000000000001 /* TianTianCheckInApp.swift */; };
+		B10200000000000000000002 /* WorkoutConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10200000000000000000002 /* WorkoutConfig.swift */; };
+		B10300000000000000000003 /* WorkoutEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10300000000000000000003 /* WorkoutEvent.swift */; };
+		B10400000000000000000004 /* ConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10400000000000000000004 /* ConfigStore.swift */; };
+		B10500000000000000000005 /* CameraRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10500000000000000000005 /* CameraRecorder.swift */; };
+		B10600000000000000000006 /* SpeechCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10600000000000000000006 /* SpeechCoordinator.swift */; };
+		B10700000000000000000007 /* PhotoLibrarySaver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10700000000000000000007 /* PhotoLibrarySaver.swift */; };
+		B10800000000000000000008 /* VideoComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10800000000000000000008 /* VideoComposer.swift */; };
+		B10900000000000000000009 /* WorkoutSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10900000000000000000009 /* WorkoutSessionController.swift */; };
+		B11000000000000000000010 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000010 /* RootView.swift */; };
+		B11100000000000000000011 /* SetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11100000000000000000011 /* SetupView.swift */; };
+		B11200000000000000000012 /* CameraPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11200000000000000000012 /* CameraPreview.swift */; };
+		B11300000000000000000013 /* WorkoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11300000000000000000013 /* WorkoutView.swift */; };
+		B11400000000000000000014 /* ResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11400000000000000000014 /* ResultView.swift */; };
+		B11500000000000000000015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A11500000000000000000015 /* Assets.xcassets */; };
+		B11600000000000000000016 /* WorkoutConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11600000000000000000016 /* WorkoutConfigTests.swift */; };
+		B11800000000000000000018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A11800000000000000000018 /* PrivacyInfo.xcprivacy */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		X00100000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = T00100000000000000000001;
+			remoteInfo = TianTianCheckIn;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A00300000000000000000003 /* TianTianCheckIn.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TianTianCheckIn.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00400000000000000000004 /* TianTianCheckInTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TianTianCheckInTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10100000000000000000001 /* TianTianCheckInApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/App/TianTianCheckInApp.swift; sourceTree = SOURCE_ROOT; };
+		A10200000000000000000002 /* WorkoutConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Models/WorkoutConfig.swift; sourceTree = SOURCE_ROOT; };
+		A10300000000000000000003 /* WorkoutEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Models/WorkoutEvent.swift; sourceTree = SOURCE_ROOT; };
+		A10400000000000000000004 /* ConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Models/ConfigStore.swift; sourceTree = SOURCE_ROOT; };
+		A10500000000000000000005 /* CameraRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/CameraRecorder.swift; sourceTree = SOURCE_ROOT; };
+		A10600000000000000000006 /* SpeechCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/SpeechCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		A10700000000000000000007 /* PhotoLibrarySaver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/PhotoLibrarySaver.swift; sourceTree = SOURCE_ROOT; };
+		A10800000000000000000008 /* VideoComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/VideoComposer.swift; sourceTree = SOURCE_ROOT; };
+		A10900000000000000000009 /* WorkoutSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/WorkoutSessionController.swift; sourceTree = SOURCE_ROOT; };
+		A11000000000000000000010 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Views/RootView.swift; sourceTree = SOURCE_ROOT; };
+		A11100000000000000000011 /* SetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Views/SetupView.swift; sourceTree = SOURCE_ROOT; };
+		A11200000000000000000012 /* CameraPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Views/CameraPreview.swift; sourceTree = SOURCE_ROOT; };
+		A11300000000000000000013 /* WorkoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Views/WorkoutView.swift; sourceTree = SOURCE_ROOT; };
+		A11400000000000000000014 /* ResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Views/ResultView.swift; sourceTree = SOURCE_ROOT; };
+		A11500000000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = TianTianCheckIn/Assets.xcassets; sourceTree = SOURCE_ROOT; };
+		A11600000000000000000016 /* WorkoutConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckInTests/WorkoutConfigTests.swift; sourceTree = SOURCE_ROOT; };
+		A11800000000000000000018 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = TianTianCheckIn/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		P00200000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		P01200000000000000000012 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00100000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A01000000000000000000010 /* App */,
+				A01100000000000000000011 /* Models */,
+				A01200000000000000000012 /* Services */,
+				A01300000000000000000013 /* Views */,
+				A11500000000000000000015 /* Assets.xcassets */,
+				A11800000000000000000018 /* PrivacyInfo.xcprivacy */,
+				A01400000000000000000014 /* TianTianCheckInTests */,
+				A00200000000000000000002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A00200000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A00300000000000000000003 /* TianTianCheckIn.app */,
+				A00400000000000000000004 /* TianTianCheckInTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A01000000000000000000010 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A10100000000000000000001 /* TianTianCheckInApp.swift */,
+			);
+			name = App;
+			sourceTree = "<group>";
+		};
+		A01100000000000000000011 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A10200000000000000000002 /* WorkoutConfig.swift */,
+				A10300000000000000000003 /* WorkoutEvent.swift */,
+				A10400000000000000000004 /* ConfigStore.swift */,
+			);
+			name = Models;
+			sourceTree = "<group>";
+		};
+		A01200000000000000000012 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A10500000000000000000005 /* CameraRecorder.swift */,
+				A10600000000000000000006 /* SpeechCoordinator.swift */,
+				A10700000000000000000007 /* PhotoLibrarySaver.swift */,
+				A10800000000000000000008 /* VideoComposer.swift */,
+				A10900000000000000000009 /* WorkoutSessionController.swift */,
+			);
+			name = Services;
+			sourceTree = "<group>";
+		};
+		A01300000000000000000013 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A11000000000000000000010 /* RootView.swift */,
+				A11100000000000000000011 /* SetupView.swift */,
+				A11200000000000000000012 /* CameraPreview.swift */,
+				A11300000000000000000013 /* WorkoutView.swift */,
+				A11400000000000000000014 /* ResultView.swift */,
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		A01400000000000000000014 /* TianTianCheckInTests */ = {
+			isa = PBXGroup;
+			children = (
+				A11600000000000000000016 /* WorkoutConfigTests.swift */,
+			);
+			name = TianTianCheckInTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		T00100000000000000000001 /* TianTianCheckIn */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = L01100000000000000000011 /* Build configuration list for PBXNativeTarget "TianTianCheckIn" */;
+			buildPhases = (
+				P00100000000000000000001 /* Sources */,
+				P00200000000000000000002 /* Frameworks */,
+				P00300000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TianTianCheckIn;
+			productName = TianTianCheckIn;
+			productReference = A00300000000000000000003 /* TianTianCheckIn.app */;
+			productType = "com.apple.product-type.application";
+		};
+		T00200000000000000000002 /* TianTianCheckInTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = L02100000000000000000021 /* Build configuration list for PBXNativeTarget "TianTianCheckInTests" */;
+			buildPhases = (
+				P01100000000000000000011 /* Sources */,
+				P01200000000000000000012 /* Frameworks */,
+				P01300000000000000000013 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D00100000000000000000001 /* PBXTargetDependency */,
+			);
+			name = TianTianCheckInTests;
+			productName = TianTianCheckInTests;
+			productReference = A00400000000000000000004 /* TianTianCheckInTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000000000000000000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					T00100000000000000000001 = {
+						CreatedOnToolsVersion = 16.2;
+					};
+					T00200000000000000000002 = {
+						CreatedOnToolsVersion = 16.2;
+						TestTargetID = T00100000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = L00100000000000000000001 /* Build configuration list for PBXProject "TianTianCheckIn" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh_Hans;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				zh_Hans,
+			);
+			mainGroup = A00100000000000000000001;
+			productRefGroup = A00200000000000000000002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				T00100000000000000000001 /* TianTianCheckIn */,
+				T00200000000000000000002 /* TianTianCheckInTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		P00300000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B11500000000000000000015 /* Assets.xcassets in Resources */,
+				B11800000000000000000018 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		P01300000000000000000013 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		P00100000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10100000000000000000001 /* TianTianCheckInApp.swift in Sources */,
+				B10200000000000000000002 /* WorkoutConfig.swift in Sources */,
+				B10300000000000000000003 /* WorkoutEvent.swift in Sources */,
+				B10400000000000000000004 /* ConfigStore.swift in Sources */,
+				B10500000000000000000005 /* CameraRecorder.swift in Sources */,
+				B10600000000000000000006 /* SpeechCoordinator.swift in Sources */,
+				B10700000000000000000007 /* PhotoLibrarySaver.swift in Sources */,
+				B10800000000000000000008 /* VideoComposer.swift in Sources */,
+				B10900000000000000000009 /* WorkoutSessionController.swift in Sources */,
+				B11000000000000000000010 /* RootView.swift in Sources */,
+				B11100000000000000000011 /* SetupView.swift in Sources */,
+				B11200000000000000000012 /* CameraPreview.swift in Sources */,
+				B11300000000000000000013 /* WorkoutView.swift in Sources */,
+				B11400000000000000000014 /* ResultView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		P01100000000000000000011 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B11600000000000000000016 /* WorkoutConfigTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D00100000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = T00100000000000000000001 /* TianTianCheckIn */;
+			targetProxy = X00100000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		C00100000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		C00200000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		C01100000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "天天打卡";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "用于录制运动训练过程，并生成带计时计次数据的视频。";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "用于在运动录像中保留现场声音和时间播报。";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "用于将生成的运动训练视频保存到系统相册。";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantiandaka;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		C01200000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "天天打卡";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "用于录制运动训练过程，并生成带计时计次数据的视频。";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "用于在运动录像中保留现场声音和时间播报。";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "用于将生成的运动训练视频保存到系统相册。";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantiandaka;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		C02100000000000000000021 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantiandaka.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TianTianCheckIn.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TianTianCheckIn";
+			};
+			name = Debug;
+		};
+		C02200000000000000000022 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shaoguoqing.tiantiandaka.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TianTianCheckIn.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TianTianCheckIn";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		L00100000000000000000001 /* Build configuration list for PBXProject "TianTianCheckIn" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00100000000000000000001 /* Debug */,
+				C00200000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		L01100000000000000000011 /* Build configuration list for PBXNativeTarget "TianTianCheckIn" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C01100000000000000000011 /* Debug */,
+				C01200000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		L02100000000000000000021 /* Build configuration list for PBXNativeTarget "TianTianCheckInTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C02100000000000000000021 /* Debug */,
+				C02200000000000000000022 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A00000000000000000000000 /* Project object */;
+}
