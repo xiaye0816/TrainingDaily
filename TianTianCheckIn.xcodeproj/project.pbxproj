@@ -24,6 +24,7 @@
 		B11500000000000000000015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A11500000000000000000015 /* Assets.xcassets */; };
 		B11600000000000000000016 /* WorkoutConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11600000000000000000016 /* WorkoutConfigTests.swift */; };
 		B11800000000000000000018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A11800000000000000000018 /* PrivacyInfo.xcprivacy */; };
+		B11900000000000000000019 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A11900000000000000000019 /* LaunchScreen.storyboard */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 		A11500000000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = TianTianCheckIn/Assets.xcassets; sourceTree = SOURCE_ROOT; };
 		A11600000000000000000016 /* WorkoutConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckInTests/WorkoutConfigTests.swift; sourceTree = SOURCE_ROOT; };
 		A11800000000000000000018 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = TianTianCheckIn/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
+		A11900000000000000000019 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = TianTianCheckIn/LaunchScreen.storyboard; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,6 +86,7 @@
 				A01200000000000000000012 /* Services */,
 				A01300000000000000000013 /* Views */,
 				A11500000000000000000015 /* Assets.xcassets */,
+				A11900000000000000000019 /* LaunchScreen.storyboard */,
 				A11800000000000000000018 /* PrivacyInfo.xcprivacy */,
 				A01400000000000000000014 /* TianTianCheckInTests */,
 				A00200000000000000000002 /* Products */,
@@ -232,6 +235,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B11500000000000000000015 /* Assets.xcassets in Resources */,
+				B11900000000000000000019 /* LaunchScreen.storyboard in Resources */,
 				B11800000000000000000018 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -396,7 +400,8 @@
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "用于在运动录像中保留现场声音和时间播报。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "用于将生成的运动训练视频保存到系统相册。";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -428,7 +433,8 @@
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "用于在运动录像中保留现场声音和时间播报。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "用于将生成的运动训练视频保存到系统相册。";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

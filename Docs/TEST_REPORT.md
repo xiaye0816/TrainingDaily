@@ -1,14 +1,15 @@
 # 本地测试报告
 
-测试日期：2026-09-06（升级环境后复测）
+测试日期：2026-09-07（升级环境后复测）
 
 ## 已通过
 
 - Xcode 26.6 / iOS 26.5 SDK 无签名 Debug 编译通过（iPhoneOS 与 Simulator）。
-- `WorkoutConfigTests` 共 7 项全部通过：1 秒开屏状态、配置边界、功能依赖、时间播报规则、视频叠字时间轴、时间播报优先级和计次不排队策略。
+- `WorkoutConfigTests` 共 8 项全部通过：原生浅色启动页与共用品牌资源、1 秒开屏状态、配置边界、功能依赖、时间播报规则、视频叠字时间轴、时间播报优先级和计次不排队策略。
 - App 已在升级后的 iPhone 17 Pro / iOS 26.5 模拟器中安装并启动，品牌开屏渲染正常并自动进入配置页，无启动崩溃。
 - 使用 Apple Development 签名完成 iPhone 17 Pro Max / iOS 26.2.1 真机构建及覆盖安装。
 - 语音调度已验证：时间播报会打断计次，播报期间及队列中的过期计次不会补播。
+- 原生 `LaunchScreen.storyboard` 编译无错误、警告或提示；打包产物包含启动页并固定为浅色外观。
 - `project.pbxproj`、`PrivacyInfo.xcprivacy` 和资源目录结构校验通过。
 - App Icon 为 1024 × 1024、无 Alpha 通道。
 

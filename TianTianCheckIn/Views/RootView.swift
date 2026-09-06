@@ -69,18 +69,12 @@ private struct BrandSplashView: View {
 
     private var splashBackground: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.92, green: 1.00, blue: 0.95),
-                    Color(red: 0.98, green: 0.99, blue: 0.96),
-                    .white
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            Image("SplashBackground")
+                .resizable()
+                .scaledToFill()
 
-            Circle()
-                .fill(Color.workoutGreen.opacity(0.09))
+            Image("SplashGlow")
+                .resizable()
                 .frame(width: 430, height: 430)
                 .offset(x: 175, y: -245)
         }
@@ -90,38 +84,30 @@ private struct BrandSplashView: View {
     private var brand: some View {
         VStack(spacing: 22) {
             ZStack {
-                RoundedRectangle(cornerRadius: 34, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.workoutGreen,
-                                Color(red: 0.04, green: 0.58, blue: 0.30)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .shadow(color: Color.workoutGreen.opacity(0.28), radius: 24, y: 12)
+                Image("SplashTile")
+                    .resizable()
+                    .frame(width: 132, height: 132)
 
                 Image(systemName: "figure.run")
-                    .font(.system(size: 60, weight: .semibold))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 74, height: 74)
                     .foregroundStyle(.white)
             }
             .frame(width: 132, height: 132)
 
             VStack(spacing: 11) {
                 Text("天天打卡")
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                    .font(.system(size: 42, weight: .bold))
                     .foregroundStyle(Color.workoutInk)
 
                 Text("中小学生体测训练记录")
-                    .font(.title3.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(Color(white: 0.52))
 
                 Text("每一秒，每一次，都看得见。")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.secondary.opacity(0.86))
-                    .padding(.top, 1)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color(white: 0.65))
             }
             .multilineTextAlignment(.center)
         }

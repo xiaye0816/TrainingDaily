@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import TianTianCheckIn
 
 final class WorkoutConfigTests: XCTestCase {
@@ -10,6 +11,20 @@ final class WorkoutConfigTests: XCTestCase {
 
         flow.dismissSplash()
         XCTAssertFalse(flow.isShowingSplash)
+    }
+
+    func testNativeLaunchScreenUsesLightStoryboardAndSharedAssets() {
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "UILaunchStoryboardName") as? String,
+            "LaunchScreen"
+        )
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "UIUserInterfaceStyle") as? String,
+            "Light"
+        )
+        XCTAssertNotNil(UIImage(named: "SplashBackground"))
+        XCTAssertNotNil(UIImage(named: "SplashGlow"))
+        XCTAssertNotNil(UIImage(named: "SplashTile"))
     }
 
     func testNormalizationClampsValuesAndDependencies() {
