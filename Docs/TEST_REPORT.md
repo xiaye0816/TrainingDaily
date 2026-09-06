@@ -5,8 +5,10 @@
 ## 已通过
 
 - Xcode 26.6 / iOS 26.5 SDK 无签名 Debug 编译通过（iPhoneOS 与 Simulator）。
-- `WorkoutConfigTests` 共 4 项全部通过：配置边界、功能依赖、时间播报规则、视频叠字时间轴。
+- `WorkoutConfigTests` 共 6 项全部通过：配置边界、功能依赖、时间播报规则、视频叠字时间轴、时间播报优先级和计次不排队策略。
 - App 已在升级后的 iPhone 17 Pro / iOS 26.5 模拟器中安装并启动，首页渲染正常，无启动崩溃。
+- 使用 Apple Development 签名完成 iPhone 17 Pro Max / iOS 26.2.1 真机构建及覆盖安装。
+- 语音调度已验证：时间播报会打断计次，播报期间及队列中的过期计次不会补播。
 - `project.pbxproj`、`PrivacyInfo.xcprivacy` 和资源目录结构校验通过。
 - App Icon 为 1024 × 1024、无 Alpha 通道。
 

@@ -69,4 +69,36 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertEqual(segments.first?.count, 0)
         XCTAssertEqual(segments.first?.label, "0 次")
     }
+
+    func testPriorityAnnouncementDropsCountsUntilItFinishes() {
+        var arbiter = SpeechAnnouncementArbiter()
+        let speakingCount = UUID()
+        let timeAnnouncement = UUID()
+
+        XCTAssertTrue(arbiter.beginCount(token: speakingCount))
+
+        arbiter.beginPriority(token: timeAnnouncement)
+
+        XCTAssertTrue(arbiter.isPriorityActive)
+        XCTAssertFalse(arbiter.beginCount(token: UUID()))
+
+        // A delayed cancellation callback from the interrupted count must not
+        // clear the newer time announcement.
+        arbiter.finish(token: speakingCount)
+        XCTAssertTrue(arbiter.isPriorityActive)
+
+        arbiter.finish(token: timeAnnouncement)
+        XCTAssertTrue(arbiter.beginCount(token: UUID()))
+    }
+
+    func testCountAnnouncementsAreNeverQueued() {
+        var arbiter = SpeechAnnouncementArbiter()
+        let firstCount = UUID()
+
+        XCTAssertTrue(arbiter.beginCount(token: firstCount))
+        XCTAssertFalse(arbiter.beginCount(token: UUID()))
+
+        arbiter.finish(token: firstCount)
+        XCTAssertTrue(arbiter.beginCount(token: UUID()))
+    }
 }

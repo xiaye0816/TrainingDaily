@@ -74,7 +74,7 @@ final class WorkoutSessionController: ObservableObject {
 
                 for number in stride(from: 3, through: 1, by: -1) {
                     phase = .countdown(number)
-                    speech.speak("\(number)", interrupt: true)
+                    speech.speakPriority("\(number)")
                     try await Task.sleep(nanoseconds: 1_000_000_000)
                 }
 
@@ -83,7 +83,7 @@ final class WorkoutSessionController: ObservableObject {
                 elapsedSeconds = 0
                 remainingSeconds = config.durationSeconds
                 phase = .active
-                speech.speak("开始", interrupt: true)
+                speech.speakPriority("开始")
                 events.append(WorkoutEvent(offset: 0, kind: .announcement("开始")))
                 startClock()
             } catch is CancellationError {
@@ -104,8 +104,9 @@ final class WorkoutSessionController: ObservableObject {
         if config.countAnnouncementEnabled,
            count.isMultiple(of: config.countAnnouncementInterval) {
             let text = "\(count)次"
-            speech.speak(text)
-            events.append(WorkoutEvent(offset: offset, kind: .announcement(text)))
+            if speech.speakCount(text) {
+                events.append(WorkoutEvent(offset: offset, kind: .announcement(text)))
+            }
         }
     }
 
@@ -197,7 +198,7 @@ final class WorkoutSessionController: ObservableObject {
               !announcedSeconds.contains(remaining) else { return }
         announcedSeconds.insert(remaining)
         let text = "还剩\(remaining)秒"
-        speech.speak(text)
+        speech.speakPriority(text)
         events.append(WorkoutEvent(offset: currentOffset, kind: .announcement(text)))
     }
 
