@@ -1,19 +1,12 @@
 import SwiftUI
 
-enum IdleScreen: Equatable {
-    case welcome
-    case setup
-}
-
 struct RootFlowState: Equatable {
-    private(set) var idleScreen: IdleScreen = .welcome
+    static let splashDurationNanoseconds: UInt64 = 1_000_000_000
 
-    mutating func showSetup() {
-        idleScreen = .setup
-    }
+    private(set) var isShowingSplash = true
 
-    mutating func showWelcome() {
-        idleScreen = .welcome
+    mutating func dismissSplash() {
+        isShowingSplash = false
     }
 }
 
@@ -23,64 +16,58 @@ struct RootView: View {
     @State private var flow = RootFlowState()
 
     var body: some View {
-        Group {
-            switch session.phase {
-            case .idle:
-                switch flow.idleScreen {
-                case .welcome:
-                    WelcomeView {
-                        flow.showSetup()
-                    }
-                case .setup:
-                    SetupView(
-                        config: $configStore.config,
-                        onBack: { flow.showWelcome() },
-                        onStart: { session.prepare(config: configStore.config) }
-                    )
-                }
-            case .result:
-                ResultView {
-                    session.returnHome()
-                    flow.showWelcome()
-                }
-            case .failed:
-                FailureView()
-            default:
-                WorkoutView()
+        ZStack {
+            mainContent
+
+            if flow.isShowingSplash {
+                BrandSplashView()
+                    .zIndex(1)
             }
         }
         .preferredColorScheme(.light)
-    }
-}
-
-private struct WelcomeView: View {
-    let onStart: () -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                welcomeBackground
-
-                ScrollView {
-                    VStack(spacing: 0) {
-                        Spacer(minLength: 52)
-                        brand
-                        Spacer(minLength: 38)
-                        featureCard
-                        Spacer(minLength: 42)
-                        startButton
-                        privacyNote
-                    }
-                    .frame(minHeight: max(proxy.size.height, 640))
-                    .padding(.horizontal, 22)
-                    .padding(.bottom, 18)
-                }
-                .scrollIndicators(.hidden)
+        .task {
+            guard flow.isShowingSplash else { return }
+            await Task.yield()
+            do {
+                try await Task.sleep(nanoseconds: RootFlowState.splashDurationNanoseconds)
+            } catch {
+                return
             }
+            flow.dismissSplash()
         }
     }
 
-    private var welcomeBackground: some View {
+    @ViewBuilder
+    private var mainContent: some View {
+        switch session.phase {
+        case .idle:
+            SetupView(config: $configStore.config) {
+                session.prepare(config: configStore.config)
+            }
+        case .result:
+            ResultView()
+        case .failed:
+            FailureView()
+        default:
+            WorkoutView()
+        }
+    }
+}
+
+private struct BrandSplashView: View {
+    var body: some View {
+        ZStack {
+            splashBackground
+            brand
+                .padding(.horizontal, 28)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("天天打卡，中小学生体测训练记录")
+    }
+
+    private var splashBackground: some View {
         ZStack {
             LinearGradient(
                 colors: [
@@ -94,24 +81,22 @@ private struct WelcomeView: View {
 
             Circle()
                 .fill(Color.workoutGreen.opacity(0.09))
-                .frame(width: 360, height: 360)
-                .offset(x: 150, y: -250)
-
-            Circle()
-                .fill(Color.yellow.opacity(0.10))
-                .frame(width: 260, height: 260)
-                .offset(x: -150, y: 320)
+                .frame(width: 430, height: 430)
+                .offset(x: 175, y: -245)
         }
         .ignoresSafeArea()
     }
 
     private var brand: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 22) {
             ZStack {
-                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                RoundedRectangle(cornerRadius: 34, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [Color.workoutGreen, Color(red: 0.04, green: 0.58, blue: 0.30)],
+                            colors: [
+                                Color.workoutGreen,
+                                Color(red: 0.04, green: 0.58, blue: 0.30)
+                            ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -119,14 +104,14 @@ private struct WelcomeView: View {
                     .shadow(color: Color.workoutGreen.opacity(0.28), radius: 24, y: 12)
 
                 Image(systemName: "figure.run")
-                    .font(.system(size: 54, weight: .semibold))
+                    .font(.system(size: 60, weight: .semibold))
                     .foregroundStyle(.white)
             }
-            .frame(width: 112, height: 112)
+            .frame(width: 132, height: 132)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 11) {
                 Text("天天打卡")
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
+                    .font(.system(size: 42, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.workoutInk)
 
                 Text("中小学生体测训练记录")
@@ -135,64 +120,11 @@ private struct WelcomeView: View {
 
                 Text("每一秒，每一次，都看得见。")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary.opacity(0.86))
-                    .padding(.top, 2)
+                    .foregroundStyle(Color.secondary.opacity(0.86))
+                    .padding(.top, 1)
             }
             .multilineTextAlignment(.center)
         }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var featureCard: some View {
-        HStack(spacing: 8) {
-            WelcomeFeature(icon: "timer", title: "计时播报")
-            WelcomeFeature(icon: "plus.circle.fill", title: "轻触计次")
-            WelcomeFeature(icon: "video.fill", title: "录像留档")
-        }
-        .padding(.vertical, 20)
-        .padding(.horizontal, 10)
-        .background(.white.opacity(0.88))
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .shadow(color: .black.opacity(0.06), radius: 18, y: 8)
-    }
-
-    private var startButton: some View {
-        Button(action: onStart) {
-            HStack {
-                Text("开始一次训练")
-                Spacer()
-                Image(systemName: "arrow.right")
-            }
-            .padding(.horizontal, 4)
-        }
-        .buttonStyle(PrimaryButtonStyle())
-        .accessibilityHint("进入计时、计次和录像设置")
-    }
-
-    private var privacyNote: some View {
-        Label("无需账号，训练数据仅保存在本机", systemImage: "lock.shield.fill")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.top, 16)
-    }
-}
-
-private struct WelcomeFeature: View {
-    let icon: String
-    let title: String
-
-    var body: some View {
-        VStack(spacing: 9) {
-            Image(systemName: icon)
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Color.workoutGreen)
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.workoutInk.opacity(0.78))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity)
     }
 }
 

@@ -2,16 +2,14 @@ import XCTest
 @testable import TianTianCheckIn
 
 final class WorkoutConfigTests: XCTestCase {
-    func testRootFlowStartsAtWelcomeAndCanOpenSetup() {
+    func testRootFlowShowsOneSecondSplashThenDismisses() {
         var flow = RootFlowState()
 
-        XCTAssertEqual(flow.idleScreen, .welcome)
+        XCTAssertTrue(flow.isShowingSplash)
+        XCTAssertEqual(RootFlowState.splashDurationNanoseconds, 1_000_000_000)
 
-        flow.showSetup()
-        XCTAssertEqual(flow.idleScreen, .setup)
-
-        flow.showWelcome()
-        XCTAssertEqual(flow.idleScreen, .welcome)
+        flow.dismissSplash()
+        XCTAssertFalse(flow.isShowingSplash)
     }
 
     func testNormalizationClampsValuesAndDependencies() {
