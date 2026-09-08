@@ -21,10 +21,13 @@ final class WorkoutSessionController: ObservableObject {
     @Published private(set) var result: WorkoutResult?
     @Published private(set) var isSaved = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var poseStatus: PoseTrackingStatus = .inactive
+    @Published private(set) var isAutomaticCountingActive = false
 
     let cameraRecorder = CameraRecorder()
 
     private let speech = SpeechCoordinator()
+    private let poseRecognition = PoseRecognitionEngine()
     private var config = WorkoutConfig.default
     private var events: [WorkoutEvent] = []
     private var clockTask: Task<Void, Never>?
@@ -32,6 +35,7 @@ final class WorkoutSessionController: ObservableObject {
     private var rawStartUptime: TimeInterval?
     private var rawURL: URL?
     private var announcedSeconds: Set<Int> = []
+    private var lastCountEventOffset: TimeInterval = 0
     private var isFinalizing = false
 
     var displayTime: String {
@@ -43,18 +47,53 @@ final class WorkoutSessionController: ObservableObject {
 
     var currentConfig: WorkoutConfig { config }
 
+    var canBeginCountdown: Bool {
+        config.countingMode != .automatic || poseStatus.isReady
+    }
+
     func prepare(config: WorkoutConfig) {
         resetSessionState()
         self.config = config.normalized
         remainingSeconds = self.config.durationSeconds
         phase = .preparingCamera
+        let recognitionSessionID = UUID()
+        self.recognitionSessionID = recognitionSessionID
+
+        let analyzer: PoseRecognitionEngine?
+        if self.config.countingMode == .automatic {
+            poseStatus = .findingPerson
+            analyzer = poseRecognition
+            poseRecognition.configure(
+                exercise: self.config.exerciseType,
+                statusHandler: { [weak self] status in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.recognitionSessionID == recognitionSessionID else { return }
+                        self.handlePoseStatus(status)
+                    }
+                },
+                detectionHandler: { [weak self] detection in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.recognitionSessionID == recognitionSessionID else { return }
+                        self.handleAutomaticDetection(detection)
+                    }
+                }
+            )
+        } else {
+            poseStatus = .inactive
+            analyzer = nil
+            poseRecognition.stop()
+        }
 
         Task {
             do {
                 if self.config.recordingEnabled {
-                    try await cameraRecorder.prepare(includeAudio: self.config.microphoneEnabled)
+                    try await cameraRecorder.prepare(
+                        includeAudio: self.config.microphoneEnabled,
+                        poseAnalyzer: analyzer
+                    )
                 }
                 phase = .framing
+                cameraRecorder.updateOrientation(UIDevice.current.orientation)
             } catch {
                 fail(error)
             }
@@ -62,10 +101,13 @@ final class WorkoutSessionController: ObservableObject {
     }
 
     func beginCountdown(orientation: UIDeviceOrientation) {
-        guard phase == .framing else { return }
+        guard phase == .framing, canBeginCountdown else { return }
 
         Task {
             do {
+                if config.countingMode == .automatic {
+                    poseRecognition.pause()
+                }
                 if config.recordingEnabled {
                     let start = try await cameraRecorder.startRecording(orientation: orientation)
                     rawStartUptime = start.uptime
@@ -83,6 +125,11 @@ final class WorkoutSessionController: ObservableObject {
                 elapsedSeconds = 0
                 remainingSeconds = config.durationSeconds
                 phase = .active
+                if config.countingMode == .automatic {
+                    isAutomaticCountingActive = true
+                    poseStatus = .tracking
+                    poseRecognition.beginCounting(activeStartUptime: now)
+                }
                 speech.speakPriority("开始")
                 events.append(WorkoutEvent(offset: 0, kind: .announcement("开始")))
                 startClock()
@@ -96,16 +143,26 @@ final class WorkoutSessionController: ObservableObject {
 
     func incrementCount() {
         guard phase == .active, config.counterEnabled else { return }
+        applyCount(at: currentOffset, provideHaptic: true)
+    }
+
+    private func applyCount(at offset: TimeInterval, provideHaptic: Bool) {
+        // A manual correction can arrive while Vision is finishing an older
+        // frame. Keep count events monotonic so the exported overlay never
+        // shows a future total before that correction happened.
+        let safeOffset = max(max(0, offset), lastCountEventOffset)
+        lastCountEventOffset = safeOffset
         count += 1
-        let offset = currentOffset
-        events.append(WorkoutEvent(offset: offset, kind: .countChanged(count)))
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        events.append(WorkoutEvent(offset: safeOffset, kind: .countChanged(count)))
+        if provideHaptic {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
 
         if config.countAnnouncementEnabled,
            count.isMultiple(of: config.countAnnouncementInterval) {
             let text = "\(count)次"
             if speech.speakCount(text) {
-                events.append(WorkoutEvent(offset: offset, kind: .announcement(text)))
+                events.append(WorkoutEvent(offset: safeOffset, kind: .announcement(text)))
             }
         }
     }
@@ -113,7 +170,9 @@ final class WorkoutSessionController: ObservableObject {
     func undoCount() {
         guard phase == .active, config.counterEnabled, count > 0 else { return }
         count -= 1
-        events.append(WorkoutEvent(offset: currentOffset, kind: .countChanged(count)))
+        let offset = max(currentOffset, lastCountEventOffset)
+        lastCountEventOffset = offset
+        events.append(WorkoutEvent(offset: offset, kind: .countChanged(count)))
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 
@@ -131,6 +190,19 @@ final class WorkoutSessionController: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    func updateCameraOrientation(_ orientation: UIDeviceOrientation) {
+        guard phase == .preparingCamera || phase == .framing else { return }
+        cameraRecorder.updateOrientation(orientation)
+    }
+
+    func useManualCountingForCurrentSession() {
+        guard phase == .framing, config.countingMode == .automatic else { return }
+        config.countingMode = .manual
+        isAutomaticCountingActive = false
+        poseStatus = .inactive
+        poseRecognition.pause()
     }
 
     func saveResult() {
@@ -152,6 +224,7 @@ final class WorkoutSessionController: ObservableObject {
     }
 
     func returnHome() {
+        poseRecognition.stop()
         cleanupTemporaryFiles(keepOutput: false)
         resetSessionState()
         phase = .idle
@@ -159,6 +232,7 @@ final class WorkoutSessionController: ObservableObject {
 
     func cancelBeforeStart() {
         cameraRecorder.stopSession()
+        poseRecognition.stop()
         cleanupTemporaryFiles(keepOutput: false)
         resetSessionState()
         phase = .idle
@@ -206,6 +280,8 @@ final class WorkoutSessionController: ObservableObject {
         guard !isFinalizing, phase == .active else { return }
         isFinalizing = true
         phase = .processing
+        isAutomaticCountingActive = false
+        poseRecognition.pause()
         speech.stop()
 
         let actualDuration = max(0.1, currentOffset)
@@ -246,6 +322,7 @@ final class WorkoutSessionController: ObservableObject {
 
     private func fail(_ error: Error) {
         cameraRecorder.stopSession()
+        poseRecognition.stop()
         speech.stop()
         errorMessage = error.localizedDescription
         phase = .failed
@@ -261,10 +338,34 @@ final class WorkoutSessionController: ObservableObject {
         result = nil
         isSaved = false
         errorMessage = nil
+        poseStatus = .inactive
+        isAutomaticCountingActive = false
         activeStartUptime = nil
         rawStartUptime = nil
         announcedSeconds = []
+        lastCountEventOffset = 0
         isFinalizing = false
+        recognitionSessionID = UUID()
+    }
+
+    private var recognitionSessionID = UUID()
+
+    private func handlePoseStatus(_ status: PoseTrackingStatus) {
+        guard config.countingMode == .automatic else { return }
+        poseStatus = status
+        if status == .performanceFallback {
+            isAutomaticCountingActive = false
+        }
+    }
+
+    private func handleAutomaticDetection(_ detection: RepDetection) {
+        guard phase == .active,
+              config.counterEnabled,
+              config.countingMode == .automatic,
+              isAutomaticCountingActive,
+              detection.exercise == config.exerciseType,
+              let activeStartUptime else { return }
+        applyCount(at: detection.captureUptime - activeStartUptime, provideHaptic: false)
     }
 
     private func cleanupTemporaryFiles(keepOutput: Bool) {

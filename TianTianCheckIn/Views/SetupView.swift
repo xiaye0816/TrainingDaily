@@ -13,6 +13,7 @@ struct SetupView: View {
             ScrollView {
                 VStack(spacing: 18) {
                     hero
+                    exerciseCard
                     timerCard
                     counterCard
                     recordingCard
@@ -41,6 +42,26 @@ struct SetupView: View {
                 }
             }
         }
+    }
+
+    private var exerciseCard: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            Label("训练项目", systemImage: config.exerciseType.icon)
+                .font(.headline)
+            Picker("训练项目", selection: $config.exerciseType) {
+                ForEach(ExerciseType.allCases) { exercise in
+                    Text(exercise.title).tag(exercise)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text(config.exerciseType.framingInstruction)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var hero: some View {
@@ -97,7 +118,13 @@ struct SetupView: View {
     }
 
     private var counterCard: some View {
-        SettingsCard(title: "计次", icon: "plus.circle", isEnabled: $config.counterEnabled) {
+        SettingsCard(title: "计次", icon: "plus.circle", isEnabled: counterEnabledBinding) {
+            Picker("计次方式", selection: countingModeBinding) {
+                ForEach(availableCountingModes) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
             Toggle("计次播报", isOn: $config.countAnnouncementEnabled)
             if config.countAnnouncementEnabled {
                 Picker("每几次播报", selection: $config.countAnnouncementInterval) {
@@ -106,19 +133,62 @@ struct SetupView: View {
                     }
                 }
             }
-            Text("运动中点击大按钮 +1，误触时可撤销。")
+            Text(config.countingMode == .automatic
+                 ? "测试功能：自动识别在本机完成；运动中仍可补计 +1 或撤销。"
+                 : "运动中点击大按钮 +1，误触时可撤销。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
     }
 
     private var recordingCard: some View {
-        SettingsCard(title: "录像", icon: "video", isEnabled: $config.recordingEnabled) {
+        SettingsCard(title: "录像", icon: "video", isEnabled: recordingEnabledBinding) {
             Toggle("保留现场声音", isOn: $config.microphoneEnabled)
             Text("完成后会生成带时间与次数的成片，确认后再保存到系统相册。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var counterEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { config.counterEnabled },
+            set: { enabled in
+                config.counterEnabled = enabled
+                if !enabled {
+                    config.countingMode = .manual
+                }
+            }
+        )
+    }
+
+    private var availableCountingModes: [CountingMode] {
+        AppFeatureAvailability.automaticCounting ? CountingMode.allCases : [.manual]
+    }
+
+    private var countingModeBinding: Binding<CountingMode> {
+        Binding(
+            get: { config.countingMode },
+            set: { mode in
+                config.countingMode = mode
+                if mode == .automatic {
+                    config.counterEnabled = true
+                    config.recordingEnabled = true
+                }
+            }
+        )
+    }
+
+    private var recordingEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { config.recordingEnabled },
+            set: { enabled in
+                config.recordingEnabled = enabled
+                if !enabled {
+                    config.countingMode = .manual
+                }
+            }
+        )
     }
 }
 

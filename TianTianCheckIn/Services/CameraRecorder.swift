@@ -34,13 +34,17 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
 
     private let sessionQueue = DispatchQueue(label: "com.tiantiandaka.capture-session")
     private let movieOutput = AVCaptureMovieFileOutput()
+    private let analysisOutput = AVCaptureVideoDataOutput()
     private var videoInput: AVCaptureDeviceInput?
     private var configuredWithAudio = false
+    private var configuredWithAnalysis = false
+    private var poseAnalyzer: PoseRecognitionEngine?
+    private var currentOrientation = UIDeviceOrientation.portrait
     private var currentURL: URL?
     private var startContinuation: CheckedContinuation<RecordingStart, Error>?
     private var stopContinuation: CheckedContinuation<URL, Error>?
 
-    func prepare(includeAudio: Bool) async throws {
+    func prepare(includeAudio: Bool, poseAnalyzer: PoseRecognitionEngine? = nil) async throws {
         guard await Self.requestAccess(for: .video) else {
             throw CameraRecorderError.cameraPermissionDenied
         }
@@ -52,7 +56,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
             sessionQueue.async { [weak self] in
                 guard let self else { return }
                 do {
-                    try self.configure(includeAudio: includeAudio)
+                    try self.configure(includeAudio: includeAudio, poseAnalyzer: poseAnalyzer)
                     if !self.session.isRunning {
                         self.session.startRunning()
                     }
@@ -85,6 +89,8 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
                         connection.videoRotationAngle = angle
                     }
                 }
+                self.currentOrientation = orientation
+                self.configureVideoConnections()
                 self.movieOutput.startRecording(to: url, recordingDelegate: self)
             }
         }
@@ -125,6 +131,8 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
                         self.session.addInput(replacement)
                         self.videoInput = replacement
                         self.configureDevice(device)
+                        self.configureVideoConnections()
+                        self.poseAnalyzer?.resetForCameraChange()
                         self.session.commitConfiguration()
                         continuation.resume()
                     } else {
@@ -146,14 +154,38 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         }
     }
 
-    private func configure(includeAudio: Bool) throws {
-        if !session.inputs.isEmpty, configuredWithAudio == includeAudio { return }
+    func updateOrientation(_ orientation: UIDeviceOrientation) {
+        guard orientation == .portrait || orientation == .portraitUpsideDown
+                || orientation == .landscapeLeft || orientation == .landscapeRight else { return }
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            currentOrientation = orientation
+            configureVideoConnections()
+        }
+    }
+
+    private func configure(includeAudio: Bool, poseAnalyzer: PoseRecognitionEngine?) throws {
+        let includeAnalysis = poseAnalyzer != nil
+        if !session.inputs.isEmpty,
+           configuredWithAudio == includeAudio,
+           configuredWithAnalysis == includeAnalysis {
+            self.poseAnalyzer = poseAnalyzer
+            if includeAnalysis {
+                analysisOutput.setSampleBufferDelegate(poseAnalyzer, queue: poseAnalyzer?.captureQueue)
+            }
+            configureVideoConnections()
+            return
+        }
 
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.inputs.forEach(session.removeInput)
+        analysisOutput.setSampleBufferDelegate(nil, queue: nil)
         if session.outputs.contains(movieOutput) {
             session.removeOutput(movieOutput)
+        }
+        if session.outputs.contains(analysisOutput) {
+            session.removeOutput(analysisOutput)
         }
 
         if session.canSetSessionPreset(.hd1920x1080) {
@@ -182,7 +214,19 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
 
         guard session.canAddOutput(movieOutput) else { throw CameraRecorderError.cannotAddOutput }
         session.addOutput(movieOutput)
+        if let poseAnalyzer {
+            analysisOutput.alwaysDiscardsLateVideoFrames = true
+            analysisOutput.videoSettings = [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+            ]
+            guard session.canAddOutput(analysisOutput) else { throw CameraRecorderError.cannotAddOutput }
+            session.addOutput(analysisOutput)
+            analysisOutput.setSampleBufferDelegate(poseAnalyzer, queue: poseAnalyzer.captureQueue)
+        }
         configuredWithAudio = includeAudio
+        configuredWithAnalysis = includeAnalysis
+        self.poseAnalyzer = poseAnalyzer
+        configureVideoConnections()
 
         let audioSession = AVAudioSession.sharedInstance()
         if includeAudio {
@@ -207,6 +251,21 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
             }
         } catch {
             // Keep the device defaults when a format can't be locked.
+        }
+    }
+
+    private func configureVideoConnections() {
+        let angle = Self.rotationAngle(for: currentOrientation)
+        let isFrontCamera = videoInput?.device.position == .front
+        for output in [movieOutput as AVCaptureOutput, analysisOutput as AVCaptureOutput] {
+            guard let connection = output.connection(with: .video) else { continue }
+            if connection.isVideoRotationAngleSupported(angle) {
+                connection.videoRotationAngle = angle
+            }
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = isFrontCamera
+            }
         }
     }
 

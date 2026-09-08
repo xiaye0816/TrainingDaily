@@ -13,7 +13,7 @@ struct WorkoutView: View {
                 case .preparingCamera:
                     statusView(title: "正在准备摄像头", subtitle: "首次使用时请允许所需权限")
                 case .framing:
-                    framingControls
+                    framingControls(isLandscape: proxy.size.width > proxy.size.height)
                 case let .countdown(number):
                     countdownView(number)
                 case .active:
@@ -28,6 +28,13 @@ struct WorkoutView: View {
         }
         .background(.black)
         .statusBarHidden(session.phase == .active || session.phase == .countdown(1) || session.phase == .countdown(2) || session.phase == .countdown(3))
+        .onAppear {
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            session.updateCameraOrientation(UIDevice.current.orientation)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            session.updateCameraOrientation(UIDevice.current.orientation)
+        }
     }
 
     @ViewBuilder
@@ -44,7 +51,7 @@ struct WorkoutView: View {
         }
     }
 
-    private var framingControls: some View {
+    private func framingControls(isLandscape: Bool) -> some View {
         VStack {
             HStack {
                 Button {
@@ -68,12 +75,19 @@ struct WorkoutView: View {
             .padding(.horizontal, 18)
             .padding(.top, 14)
 
-            Spacer()
+            Spacer(minLength: 12)
+
+            framingGuide(isLandscape: isLandscape)
+
+            Spacer(minLength: 12)
 
             VStack(spacing: 10) {
-                Text("调整机位，确保全身进入画面")
+                Text(session.currentConfig.countingMode == .automatic
+                     ? session.poseStatus.message
+                     : session.currentConfig.exerciseType.framingInstruction)
                     .font(.headline)
                     .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
                     .shadow(radius: 4)
                 Button {
                     session.beginCountdown(orientation: UIDevice.current.orientation)
@@ -81,10 +95,36 @@ struct WorkoutView: View {
                     Label("准备好了", systemImage: "checkmark")
                 }
                 .buttonStyle(PrimaryButtonStyle())
+                .disabled(!session.canBeginCountdown)
+                .opacity(session.canBeginCountdown ? 1 : 0.52)
+
+                if session.currentConfig.countingMode == .automatic, !session.canBeginCountdown {
+                    Button("改用手动计次") {
+                        session.useManualCountingForCurrentSession()
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                }
             }
             .padding(18)
             .background(.black.opacity(0.45))
         }
+    }
+
+    private func framingGuide(isLandscape: Bool) -> some View {
+        let isJumpRope = session.currentConfig.exerciseType == .jumpRope
+        let width: CGFloat = isJumpRope ? (isLandscape ? 125 : 190) : (isLandscape ? 300 : 310)
+        let height: CGFloat = isJumpRope ? (isLandscape ? 190 : 310) : (isLandscape ? 145 : 160)
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: isJumpRope ? 70 : 45, style: .continuous)
+                .stroke(.white.opacity(0.75), style: StrokeStyle(lineWidth: 2, dash: [9, 7]))
+            Image(systemName: session.currentConfig.exerciseType.icon)
+                .font(.system(size: min(width, height) * 0.5, weight: .ultraLight))
+                .foregroundStyle(.white.opacity(0.58))
+        }
+        .frame(width: width, height: height)
+        .accessibilityHidden(true)
     }
 
     private func countdownView(_ number: Int) -> some View {
@@ -138,6 +178,14 @@ struct WorkoutView: View {
                 Label("REC", systemImage: "record.circle.fill")
                     .foregroundStyle(.red)
             }
+            if session.currentConfig.countingMode == .automatic {
+                Label(
+                    session.poseStatus == .tracking ? "识别中" : "识别暂停",
+                    systemImage: session.poseStatus == .tracking ? "viewfinder" : "person.crop.circle.badge.exclamationmark"
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(session.poseStatus == .tracking ? Color.workoutGreen : .orange)
+            }
             if session.currentConfig.timerEnabled {
                 metric(title: "剩余", value: session.displayTime)
             } else {
@@ -173,7 +221,7 @@ struct WorkoutView: View {
             VStack(spacing: 4) {
                 Image(systemName: "plus")
                     .font(.system(size: 44, weight: .bold))
-                Text("计一次")
+                Text(session.isAutomaticCountingActive ? "补计 +1" : "计一次")
                     .font(.headline)
             }
             .foregroundStyle(.white)

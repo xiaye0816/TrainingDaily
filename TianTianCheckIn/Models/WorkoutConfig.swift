@@ -1,11 +1,68 @@
 import Foundation
 
+enum ExerciseType: String, Codable, CaseIterable, Identifiable, Sendable {
+    case sitUp
+    case jumpRope
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .sitUp: "仰卧起坐"
+        case .jumpRope: "一分钟跳绳"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .sitUp: "figure.core.training"
+        case .jumpRope: "figure.jumprope"
+        }
+    }
+
+    var framingInstruction: String {
+        switch self {
+        case .sitUp: "请将手机放在身体侧面，确保肩、髋、膝和脚踝完整入镜"
+        case .jumpRope: "请正对手机站立，确保头顶、双手、双脚和绳子活动空间完整入镜"
+        }
+    }
+}
+
+enum CountingMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case manual
+    case automatic
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .manual: "手动计次"
+        case .automatic: "自动计次"
+        }
+    }
+}
+
+enum AppFeatureAvailability {
+    // Automatic counting remains available in development builds for field
+    // calibration. Release builds stay manual-only until the labelled-video
+    // acceptance gate documented in Docs/AUTO_COUNTING.md has passed.
+    static var automaticCounting: Bool {
+#if DEBUG
+        true
+#else
+        false
+#endif
+    }
+}
+
 struct WorkoutConfig: Codable, Equatable, Sendable {
     var timerEnabled = true
     var durationSeconds = 60
     var autoStopAtTimerEnd = true
 
     var counterEnabled = true
+    var exerciseType = ExerciseType.sitUp
+    var countingMode = CountingMode.manual
     var countAnnouncementEnabled = false
     var countAnnouncementInterval = 5
 
@@ -30,9 +87,14 @@ struct WorkoutConfig: Codable, Equatable, Sendable {
             value.finalCountdownEnabled = false
         }
         if !value.counterEnabled {
+            value.countingMode = .manual
             value.countAnnouncementEnabled = false
         }
+        if value.countingMode == .automatic, !AppFeatureAvailability.automaticCounting {
+            value.countingMode = .manual
+        }
         if !value.recordingEnabled {
+            value.countingMode = .manual
             value.microphoneEnabled = false
         }
         return value
@@ -45,6 +107,42 @@ struct WorkoutConfig: Codable, Equatable, Sendable {
         }
         return remainingSeconds < durationSeconds
             && remainingSeconds.isMultiple(of: timeAnnouncementInterval)
+    }
+}
+
+extension WorkoutConfig {
+    private enum CodingKeys: String, CodingKey {
+        case timerEnabled
+        case durationSeconds
+        case autoStopAtTimerEnd
+        case counterEnabled
+        case exerciseType
+        case countingMode
+        case countAnnouncementEnabled
+        case countAnnouncementInterval
+        case timeAnnouncementEnabled
+        case timeAnnouncementInterval
+        case finalCountdownEnabled
+        case recordingEnabled
+        case microphoneEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let defaults = Self.default
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        timerEnabled = try container.decodeIfPresent(Bool.self, forKey: .timerEnabled) ?? defaults.timerEnabled
+        durationSeconds = try container.decodeIfPresent(Int.self, forKey: .durationSeconds) ?? defaults.durationSeconds
+        autoStopAtTimerEnd = try container.decodeIfPresent(Bool.self, forKey: .autoStopAtTimerEnd) ?? defaults.autoStopAtTimerEnd
+        counterEnabled = try container.decodeIfPresent(Bool.self, forKey: .counterEnabled) ?? defaults.counterEnabled
+        exerciseType = try container.decodeIfPresent(ExerciseType.self, forKey: .exerciseType) ?? .sitUp
+        countingMode = try container.decodeIfPresent(CountingMode.self, forKey: .countingMode) ?? .manual
+        countAnnouncementEnabled = try container.decodeIfPresent(Bool.self, forKey: .countAnnouncementEnabled) ?? defaults.countAnnouncementEnabled
+        countAnnouncementInterval = try container.decodeIfPresent(Int.self, forKey: .countAnnouncementInterval) ?? defaults.countAnnouncementInterval
+        timeAnnouncementEnabled = try container.decodeIfPresent(Bool.self, forKey: .timeAnnouncementEnabled) ?? defaults.timeAnnouncementEnabled
+        timeAnnouncementInterval = try container.decodeIfPresent(Int.self, forKey: .timeAnnouncementInterval) ?? defaults.timeAnnouncementInterval
+        finalCountdownEnabled = try container.decodeIfPresent(Bool.self, forKey: .finalCountdownEnabled) ?? defaults.finalCountdownEnabled
+        recordingEnabled = try container.decodeIfPresent(Bool.self, forKey: .recordingEnabled) ?? defaults.recordingEnabled
+        microphoneEnabled = try container.decodeIfPresent(Bool.self, forKey: .microphoneEnabled) ?? defaults.microphoneEnabled
     }
 }
 
