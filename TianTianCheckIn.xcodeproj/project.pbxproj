@@ -28,6 +28,7 @@
 		B12000000000000000000020 /* PoseRecognition.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12000000000000000000020 /* PoseRecognition.swift */; };
 		B12100000000000000000021 /* WorkoutHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000021 /* WorkoutHistory.swift */; };
 		B12200000000000000000022 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12200000000000000000022 /* HistoryView.swift */; };
+		B12300000000000000000023 /* RealtimeRecordingWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12300000000000000000023 /* RealtimeRecordingWriter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,6 +65,7 @@
 		A12000000000000000000020 /* PoseRecognition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/PoseRecognition.swift; sourceTree = SOURCE_ROOT; };
 		A12100000000000000000021 /* WorkoutHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Models/WorkoutHistory.swift; sourceTree = SOURCE_ROOT; };
 		A12200000000000000000022 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Views/HistoryView.swift; sourceTree = SOURCE_ROOT; };
+		A12300000000000000000023 /* RealtimeRecordingWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/RealtimeRecordingWriter.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -136,6 +138,7 @@
 				A10800000000000000000008 /* VideoComposer.swift */,
 				A10900000000000000000009 /* WorkoutSessionController.swift */,
 				A12000000000000000000020 /* PoseRecognition.swift */,
+				A12300000000000000000023 /* RealtimeRecordingWriter.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -280,6 +283,7 @@
 				B11300000000000000000013 /* WorkoutView.swift in Sources */,
 				B11400000000000000000014 /* ResultView.swift in Sources */,
 				B12200000000000000000022 /* HistoryView.swift in Sources */,
+				B12300000000000000000023 /* RealtimeRecordingWriter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

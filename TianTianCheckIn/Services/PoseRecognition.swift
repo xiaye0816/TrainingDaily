@@ -454,6 +454,26 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     private var lastValidPoseUptime: TimeInterval?
     private var processedFrameTimes: [TimeInterval] = []
     private var didResetForCurrentLoss = false
+    private let submissionLock = NSLock()
+    private var hasPendingFrame = false
+
+    func submit(_ sampleBuffer: CMSampleBuffer) {
+        submissionLock.lock()
+        guard !hasPendingFrame else {
+            submissionLock.unlock()
+            return
+        }
+        hasPendingFrame = true
+        submissionLock.unlock()
+        let reference = SendablePoseSampleBuffer(sampleBuffer)
+        captureQueue.async { [weak self] in
+            guard let self else { return }
+            processFrame(reference.value)
+            submissionLock.lock()
+            hasPendingFrame = false
+            submissionLock.unlock()
+        }
+    }
 
     func configure(
         exercise: ExerciseType,
@@ -669,6 +689,14 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         }
         guard !points.isEmpty else { return nil }
         return BodyPoseSample(captureUptime: captureUptime, points: points, personCount: personCount)
+    }
+}
+
+private final class SendablePoseSampleBuffer: @unchecked Sendable {
+    let value: CMSampleBuffer
+
+    init(_ value: CMSampleBuffer) {
+        self.value = value
     }
 }
 

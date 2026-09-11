@@ -13,6 +13,8 @@ struct WorkoutRecord: Identifiable, Codable, Equatable, Sendable {
     let startedAt: Date
     let exercise: ExerciseType
     let duration: TimeInterval
+    let recordedDuration: TimeInterval?
+    let recordingPipelineVersion: Int?
     let count: Int
     let endReason: WorkoutEndReason
     var videoState: WorkoutVideoState
@@ -72,6 +74,8 @@ final class WorkoutHistoryStore: ObservableObject {
             startedAt: startedAt,
             exercise: config.exerciseType,
             duration: duration,
+            recordedDuration: duration,
+            recordingPipelineVersion: 1,
             count: count,
             endReason: reason,
             videoState: .processing,
@@ -79,6 +83,42 @@ final class WorkoutHistoryStore: ObservableObject {
             sourceVideoFilename: sourceFilename,
             processingConfig: config,
             processingEvents: events,
+            errorMessage: nil,
+            savedToPhotos: false
+        )
+        records.insert(record, at: 0)
+        persist()
+        return record
+    }
+
+    func addReadyVideo(
+        videoURL: URL,
+        startedAt: Date,
+        duration: TimeInterval,
+        recordedDuration: TimeInterval,
+        count: Int,
+        reason: WorkoutEndReason,
+        config: WorkoutConfig
+    ) throws -> WorkoutRecord {
+        let id = UUID()
+        let filename = "workout-\(id.uuidString).mov"
+        let destination = directoryURL.appendingPathComponent(filename)
+        try? fileManager.removeItem(at: destination)
+        try fileManager.moveItem(at: videoURL, to: destination)
+        let record = WorkoutRecord(
+            id: id,
+            startedAt: startedAt,
+            exercise: config.exerciseType,
+            duration: duration,
+            recordedDuration: recordedDuration,
+            recordingPipelineVersion: 2,
+            count: count,
+            endReason: reason,
+            videoState: .ready,
+            videoFilename: filename,
+            sourceVideoFilename: nil,
+            processingConfig: nil,
+            processingEvents: nil,
             errorMessage: nil,
             savedToPhotos: false
         )
@@ -96,10 +136,33 @@ final class WorkoutHistoryStore: ObservableObject {
     ) -> WorkoutRecord {
         let record = WorkoutRecord(
             id: UUID(), startedAt: startedAt, exercise: config.exerciseType,
-            duration: duration, count: count, endReason: reason,
+            duration: duration, recordedDuration: nil, recordingPipelineVersion: nil,
+            count: count, endReason: reason,
             videoState: .expired, videoFilename: nil, sourceVideoFilename: nil,
             processingConfig: nil, processingEvents: nil,
             errorMessage: nil, savedToPhotos: false
+        )
+        records.insert(record, at: 0)
+        persist()
+        return record
+    }
+
+    func addFailedVideo(
+        startedAt: Date,
+        duration: TimeInterval,
+        recordedDuration: TimeInterval,
+        count: Int,
+        reason: WorkoutEndReason,
+        config: WorkoutConfig,
+        message: String
+    ) -> WorkoutRecord {
+        let record = WorkoutRecord(
+            id: UUID(), startedAt: startedAt, exercise: config.exerciseType,
+            duration: duration, recordedDuration: recordedDuration, recordingPipelineVersion: 2,
+            count: count, endReason: reason,
+            videoState: .failed, videoFilename: nil, sourceVideoFilename: nil,
+            processingConfig: nil, processingEvents: nil,
+            errorMessage: message, savedToPhotos: false
         )
         records.insert(record, at: 0)
         persist()

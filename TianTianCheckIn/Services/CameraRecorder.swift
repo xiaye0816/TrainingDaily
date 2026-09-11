@@ -40,16 +40,14 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     let session = AVCaptureSession()
 
     private let sessionQueue = DispatchQueue(label: "com.tiantiandaka.capture-session")
-    private let movieOutput = AVCaptureMovieFileOutput()
-    private let analysisOutput = AVCaptureVideoDataOutput()
+    private let mediaQueue = DispatchQueue(label: "com.tiantiandaka.media-writer", qos: .userInitiated)
+    private let videoOutput = AVCaptureVideoDataOutput()
+    private let audioOutput = AVCaptureAudioDataOutput()
+    private let recordingWriter = RealtimeRecordingWriter()
     private var videoInput: AVCaptureDeviceInput?
     private var configuredWithAudio = false
-    private var configuredWithAnalysis = false
     private var poseAnalyzer: PoseRecognitionEngine?
     private var currentOrientation = UIDeviceOrientation.portrait
-    private var currentURL: URL?
-    private var startContinuation: CheckedContinuation<RecordingStart, Error>?
-    private var stopContinuation: CheckedContinuation<URL, Error>?
 
     func prepare(includeAudio: Bool, poseAnalyzer: PoseRecognitionEngine? = nil) async throws {
         guard await Self.requestAccess(for: .video) else {
@@ -76,51 +74,56 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     }
 
     func startRecording(orientation: UIDeviceOrientation) async throws -> RecordingStart {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RecordingStart, Error>) in
+        try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async { [weak self] in
-                guard let self else { return }
-                guard !self.movieOutput.isRecording else {
+                guard let self else {
                     continuation.resume(throwing: CameraRecorderError.recordingDidNotStart)
                     return
                 }
-
-                let url = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("tiantiandaka-raw-\(UUID().uuidString)")
-                    .appendingPathExtension("mov")
-                self.currentURL = url
-                self.startContinuation = continuation
-
-                if let connection = self.movieOutput.connection(with: .video) {
-                    let angle = Self.rotationAngle(for: orientation)
-                    if connection.isVideoRotationAngleSupported(angle) {
-                        connection.videoRotationAngle = angle
-                    }
-                }
                 self.currentOrientation = orientation
                 self.configureVideoConnections()
-                self.movieOutput.startRecording(to: url, recordingDelegate: self)
+                self.mediaQueue.async { [weak self] in
+                    guard let self else {
+                        continuation.resume(throwing: CameraRecorderError.recordingDidNotStart)
+                        return
+                    }
+                    let url = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("tiantiandaka-raw-\(UUID().uuidString)")
+                        .appendingPathExtension("mov")
+                    let uptime = ProcessInfo.processInfo.systemUptime
+                    self.recordingWriter.arm(url: url, includeMicrophone: self.configuredWithAudio)
+                    continuation.resume(returning: RecordingStart(url: url, uptime: uptime))
+                }
             }
         }
     }
 
-    func stopRecording() async throws -> URL {
+    func stopRecording() async throws -> RecordingFinish {
         try await withCheckedThrowingContinuation { continuation in
-            sessionQueue.async { [weak self] in
-                guard let self else { return }
-                guard self.movieOutput.isRecording else {
-                    if let url = self.currentURL {
-                        continuation.resume(returning: url)
-                    } else {
-                        continuation.resume(throwing: CameraRecorderError.recordingDidNotStart)
-                    }
+            mediaQueue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(throwing: CameraRecorderError.recordingDidNotStart)
                     return
                 }
-                self.stopContinuation = continuation
-                self.movieOutput.stopRecording()
-                if self.session.isRunning {
-                    self.session.stopRunning()
+                self.recordingWriter.finish(completionQueue: self.mediaQueue) { result in
+                    switch result {
+                    case let .success(finish):
+                        continuation.resume(returning: finish)
+                    case let .failure(error):
+                        continuation.resume(throwing: CameraRecorderError.recordingFailed(error))
+                    }
                 }
             }
+        }
+    }
+
+    func updateRecordingOverlay(_ snapshot: RecordingOverlaySnapshot) {
+        recordingWriter.updateOverlay(snapshot)
+    }
+
+    func scheduleFinishWhistle(atUptime uptime: TimeInterval) {
+        mediaQueue.async { [weak self] in
+            self?.recordingWriter.scheduleWhistle(atUptime: uptime)
         }
     }
 
@@ -204,14 +207,9 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     }
 
     private func configure(includeAudio: Bool, poseAnalyzer: PoseRecognitionEngine?) throws {
-        let includeAnalysis = poseAnalyzer != nil
         if !session.inputs.isEmpty,
-           configuredWithAudio == includeAudio,
-           configuredWithAnalysis == includeAnalysis {
+           configuredWithAudio == includeAudio {
             self.poseAnalyzer = poseAnalyzer
-            if includeAnalysis {
-                analysisOutput.setSampleBufferDelegate(poseAnalyzer, queue: poseAnalyzer?.captureQueue)
-            }
             configureVideoConnections()
             return
         }
@@ -219,12 +217,13 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.inputs.forEach(session.removeInput)
-        analysisOutput.setSampleBufferDelegate(nil, queue: nil)
-        if session.outputs.contains(movieOutput) {
-            session.removeOutput(movieOutput)
+        videoOutput.setSampleBufferDelegate(nil, queue: nil)
+        audioOutput.setSampleBufferDelegate(nil, queue: nil)
+        if session.outputs.contains(videoOutput) {
+            session.removeOutput(videoOutput)
         }
-        if session.outputs.contains(analysisOutput) {
-            session.removeOutput(analysisOutput)
+        if session.outputs.contains(audioOutput) {
+            session.removeOutput(audioOutput)
         }
 
         if session.canSetSessionPreset(.hd1280x720) {
@@ -252,25 +251,27 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
             session.addInput(microphoneInput)
         }
 
-        guard session.canAddOutput(movieOutput) else { throw CameraRecorderError.cannotAddOutput }
-        session.addOutput(movieOutput)
-        if let poseAnalyzer {
-            analysisOutput.alwaysDiscardsLateVideoFrames = true
-            analysisOutput.videoSettings = [
-                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
-            ]
-            guard session.canAddOutput(analysisOutput) else { throw CameraRecorderError.cannotAddOutput }
-            session.addOutput(analysisOutput)
-            analysisOutput.setSampleBufferDelegate(poseAnalyzer, queue: poseAnalyzer.captureQueue)
+        videoOutput.alwaysDiscardsLateVideoFrames = true
+        videoOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+        ]
+        guard session.canAddOutput(videoOutput) else { throw CameraRecorderError.cannotAddOutput }
+        session.addOutput(videoOutput)
+        videoOutput.setSampleBufferDelegate(self, queue: mediaQueue)
+        if includeAudio {
+            guard session.canAddOutput(audioOutput) else { throw CameraRecorderError.cannotAddOutput }
+            session.addOutput(audioOutput)
+            audioOutput.setSampleBufferDelegate(self, queue: mediaQueue)
         }
         configuredWithAudio = includeAudio
-        configuredWithAnalysis = includeAnalysis
         self.poseAnalyzer = poseAnalyzer
         configureVideoConnections()
 
         let audioSession = AVAudioSession.sharedInstance()
         if includeAudio {
             try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker])
+            try audioSession.setPreferredSampleRate(48_000)
+            try? audioSession.setPreferredInputNumberOfChannels(1)
         } else {
             try audioSession.setCategory(.playback, mode: .spokenAudio)
         }
@@ -346,7 +347,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     private func configureVideoConnections() {
         let angle = Self.rotationAngle(for: currentOrientation)
         let isFrontCamera = videoInput?.device.position == .front
-        for output in [movieOutput as AVCaptureOutput, analysisOutput as AVCaptureOutput] {
+        for output in [videoOutput as AVCaptureOutput] {
             guard let connection = output.connection(with: .video) else { continue }
             if connection.isVideoRotationAngleSupported(angle) {
                 connection.videoRotationAngle = angle
@@ -381,36 +382,17 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     }
 }
 
-extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
-    func fileOutput(
-        _ output: AVCaptureFileOutput,
-        didStartRecordingTo fileURL: URL,
-        from connections: [AVCaptureConnection]
+extension CameraRecorder: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
     ) {
-        startContinuation?.resume(
-            returning: RecordingStart(url: fileURL, uptime: ProcessInfo.processInfo.systemUptime)
-        )
-        startContinuation = nil
-    }
-
-    func fileOutput(
-        _ output: AVCaptureFileOutput,
-        didFinishRecordingTo outputFileURL: URL,
-        from connections: [AVCaptureConnection],
-        error: Error?
-    ) {
-        if let error {
-            let nsError = error as NSError
-            let completed = nsError.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? false
-            if !completed {
-                startContinuation?.resume(throwing: CameraRecorderError.recordingFailed(error))
-                startContinuation = nil
-                stopContinuation?.resume(throwing: CameraRecorderError.recordingFailed(error))
-                stopContinuation = nil
-                return
-            }
+        if output === videoOutput {
+            poseAnalyzer?.submit(sampleBuffer)
+            recordingWriter.appendVideo(sampleBuffer)
+        } else if output === audioOutput {
+            recordingWriter.appendAudio(sampleBuffer)
         }
-        stopContinuation?.resume(returning: outputFileURL)
-        stopContinuation = nil
     }
 }

@@ -33,10 +33,23 @@ struct ResultView: View {
                         Button {
                             session.saveResult()
                         } label: {
-                            Label(session.isSaved ? "已保存到相册" : "保存到相册", systemImage: session.isSaved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                            if session.isSavingToPhotos {
+                                HStack {
+                                    ProgressView().tint(.white)
+                                    Text("正在保存")
+                                }
+                            } else {
+                                Label(session.isSaved ? "再次保存到相册" : "保存到相册", systemImage: "square.and.arrow.down")
+                            }
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(session.isSaved)
+                        .disabled(session.isSavingToPhotos)
+                    }
+
+                    if let saveMessage = session.saveMessage {
+                        Label(saveMessage, systemImage: "checkmark.circle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(Color.workoutGreen)
                     }
 
                     Button {
@@ -71,6 +84,7 @@ struct ResultView: View {
                 .frame(maxHeight: 460)
                 .background(.black)
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .onAppear { AppAudioSession.activateVideoPlayback() }
         } else if session.isVideoProcessing {
             ZStack {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)

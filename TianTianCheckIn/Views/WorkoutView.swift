@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import SwiftUI
 
 struct WorkoutView: View {
@@ -19,7 +20,7 @@ struct WorkoutView: View {
                     framingControls(isLandscape: proxy.size.width > proxy.size.height)
                 case let .countdown(number):
                     countdownView(number)
-                case .active:
+                case .active, .finishing:
                     activeControls(isLandscape: proxy.size.width > proxy.size.height)
                 case .processing:
                     statusView(title: "正在生成成片", subtitle: "写入时间和次数，请不要退出")
@@ -41,13 +42,21 @@ struct WorkoutView: View {
             )
         }
         .background(.black)
-        .statusBarHidden(session.phase == .active || session.phase == .countdown(1) || session.phase == .countdown(2) || session.phase == .countdown(3))
+        .statusBarHidden(session.phase == .active || session.phase == .finishing || session.phase == .countdown(1) || session.phase == .countdown(2) || session.phase == .countdown(3))
         .onAppear {
             UIDevice.current.beginGeneratingDeviceOrientationNotifications()
             session.updateCameraOrientation(UIDevice.current.orientation)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             session.updateCameraOrientation(UIDevice.current.orientation)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVCaptureSession.wasInterruptedNotification)) { notification in
+            guard let interruptedSession = notification.object as? AVCaptureSession,
+                  interruptedSession === session.cameraRecorder.session else { return }
+            session.handleCaptureInterruption()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            session.handleCaptureInterruption()
         }
     }
 
@@ -210,6 +219,11 @@ struct WorkoutView: View {
 
     private var sessionHeader: some View {
         HStack(spacing: 12) {
+            if session.phase == .finishing {
+                Label("哨音收尾", systemImage: "flag.checkered")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.yellow)
+            }
             if session.currentConfig.recordingEnabled {
                 Label("REC", systemImage: "record.circle.fill")
                     .foregroundStyle(.red)
@@ -280,12 +294,14 @@ struct WorkoutView: View {
                 .buttonStyle(GlassButtonStyle())
                 .disabled(session.count == 0)
             }
-            Button(role: .destructive) {
-                session.finishManually()
-            } label: {
-                Label("结束", systemImage: "stop.fill")
+            if session.phase == .active {
+                Button(role: .destructive) {
+                    session.finishManually()
+                } label: {
+                    Label("结束", systemImage: "stop.fill")
+                }
+                .buttonStyle(GlassButtonStyle())
             }
-            .buttonStyle(GlassButtonStyle())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

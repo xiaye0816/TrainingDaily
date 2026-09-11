@@ -132,48 +132,74 @@ enum VideoComposer {
         guard duration > 0 else { return }
 
         let shortEdge = min(renderSize.width, renderSize.height)
-        let overlayHeight = shortEdge * 0.13
-        let overlayWidth = min(renderSize.width * 0.82, shortEdge * 1.25)
-        let margin = shortEdge * 0.055
-        let frame = CGRect(
-            x: (renderSize.width - overlayWidth) / 2,
-            y: renderSize.height - overlayHeight - margin,
-            width: overlayWidth,
-            height: overlayHeight
-        )
+        let overlayHeight = shortEdge * 0.07
+        let marginX = shortEdge * 0.045
+        let marginY = shortEdge * 0.05
+        let y = renderSize.height - overlayHeight - marginY
 
-        for segment in segments where !segment.label.isEmpty {
-            let textLayer = CATextLayer()
-            textLayer.frame = frame
-            textLayer.string = segment.label
-            textLayer.alignmentMode = .center
-            textLayer.foregroundColor = UIColor.white.cgColor
-            textLayer.backgroundColor = UIColor.black.withAlphaComponent(0.62).cgColor
-            textLayer.cornerRadius = overlayHeight * 0.28
-            textLayer.masksToBounds = true
-            textLayer.contentsScale = 2
-            textLayer.font = UIFont.systemFont(ofSize: overlayHeight * 0.35, weight: .semibold)
-            textLayer.fontSize = overlayHeight * 0.35
-            textLayer.opacity = 0
-
-            let animation = CAKeyframeAnimation(keyPath: "opacity")
-            let startRatio = max(0, min(1, segment.start / duration))
-            let endRatio = max(startRatio, min(1, segment.end / duration))
-            if startRatio < 0.000_1 {
-                animation.values = [1, 0]
-                animation.keyTimes = [0, NSNumber(value: endRatio)]
-            } else {
-                animation.values = [0, 1, 0]
-                animation.keyTimes = [0, NSNumber(value: startRatio), NSNumber(value: endRatio)]
+        for segment in segments {
+            if let remaining = segment.remainingSeconds {
+                let width = shortEdge * 0.25
+                addPillLayer(
+                    text: remaining.clockText,
+                    frame: CGRect(x: marginX, y: y, width: width, height: overlayHeight),
+                    segment: segment,
+                    duration: duration,
+                    to: containingLayer
+                )
             }
-            animation.calculationMode = .discrete
-            animation.beginTime = AVCoreAnimationBeginTimeAtZero
-            animation.duration = duration
-            animation.fillMode = .both
-            animation.isRemovedOnCompletion = false
-            textLayer.add(animation, forKey: "visibility")
-            containingLayer.addSublayer(textLayer)
+            if let count = segment.count {
+                let width = shortEdge * 0.21
+                addPillLayer(
+                    text: "\(count) 次",
+                    frame: CGRect(x: renderSize.width - marginX - width, y: y, width: width, height: overlayHeight),
+                    segment: segment,
+                    duration: duration,
+                    to: containingLayer
+                )
+            }
         }
+    }
+
+    private static func addPillLayer(
+        text: String,
+        frame: CGRect,
+        segment: OverlaySegment,
+        duration: TimeInterval,
+        to containingLayer: CALayer
+    ) {
+        let textLayer = CATextLayer()
+        textLayer.frame = frame
+        textLayer.string = text
+        textLayer.alignmentMode = .center
+        textLayer.foregroundColor = UIColor.white.cgColor
+        textLayer.backgroundColor = UIColor(white: 0.13, alpha: 0.48).cgColor
+        textLayer.borderColor = UIColor.white.withAlphaComponent(0.22).cgColor
+        textLayer.borderWidth = 1
+        textLayer.cornerRadius = frame.height / 2
+        textLayer.masksToBounds = true
+        textLayer.contentsScale = 2
+        textLayer.font = UIFont.monospacedDigitSystemFont(ofSize: frame.height * 0.45, weight: .semibold)
+        textLayer.fontSize = frame.height * 0.45
+        textLayer.opacity = 0
+
+        let animation = CAKeyframeAnimation(keyPath: "opacity")
+        let startRatio = max(0, min(1, segment.start / duration))
+        let endRatio = max(startRatio, min(1, segment.end / duration))
+        if startRatio < 0.000_1 {
+            animation.values = [1, 0]
+            animation.keyTimes = [0, NSNumber(value: endRatio)]
+        } else {
+            animation.values = [0, 1, 0]
+            animation.keyTimes = [0, NSNumber(value: startRatio), NSNumber(value: endRatio)]
+        }
+        animation.calculationMode = .discrete
+        animation.beginTime = AVCoreAnimationBeginTimeAtZero
+        animation.duration = duration
+        animation.fillMode = .both
+        animation.isRemovedOnCompletion = false
+        textLayer.add(animation, forKey: "visibility")
+        containingLayer.addSublayer(textLayer)
     }
 
     private static func export(_ exporter: AVAssetExportSession) async throws {

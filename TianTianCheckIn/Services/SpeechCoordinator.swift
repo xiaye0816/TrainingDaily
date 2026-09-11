@@ -1,6 +1,14 @@
 @preconcurrency import AVFAudio
 import Foundation
 
+enum AppAudioSession {
+    static func activateVideoPlayback() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .moviePlayback)
+        try? session.setActive(true)
+    }
+}
+
 /// Pure policy used by the live speech mixer and unit tests. A clip keeps the
 /// gain assigned when it starts; an older clip is never ducked by a new one.
 struct SpeechMixPolicy {

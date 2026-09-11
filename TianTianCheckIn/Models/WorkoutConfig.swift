@@ -110,6 +110,17 @@ struct WorkoutConfig: Codable, Equatable, Sendable {
     }
 }
 
+enum WorkoutTimingPolicy {
+    static let finishTailDuration: TimeInterval = 0.5
+
+    static func announcementText(remainingSeconds: Int, finalCountdownEnabled: Bool) -> String {
+        if finalCountdownEnabled, remainingSeconds <= 5 {
+            return "\(remainingSeconds)"
+        }
+        return "\(remainingSeconds)秒"
+    }
+}
+
 extension WorkoutConfig {
     private enum CodingKeys: String, CodingKey {
         case timerEnabled

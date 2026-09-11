@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+@preconcurrency import AVFoundation
 @testable import TianTianCheckIn
 
 final class WorkoutConfigTests: XCTestCase {
@@ -83,6 +84,22 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertFalse(config.shouldAnnounce(remainingSeconds: 0))
     }
 
+    func testTimeAnnouncementTextUsesSecondsAndBareFinalCountdown() {
+        XCTAssertEqual(
+            WorkoutTimingPolicy.announcementText(remainingSeconds: 50, finalCountdownEnabled: true),
+            "50秒"
+        )
+        XCTAssertEqual(
+            WorkoutTimingPolicy.announcementText(remainingSeconds: 5, finalCountdownEnabled: true),
+            "5"
+        )
+        XCTAssertEqual(
+            WorkoutTimingPolicy.announcementText(remainingSeconds: 5, finalCountdownEnabled: false),
+            "5秒"
+        )
+        XCTAssertEqual(WorkoutTimingPolicy.finishTailDuration, 0.5)
+    }
+
     func testOverlayTimelineChangesAtCountEvent() {
         let events = [
             WorkoutEvent(offset: 0.4, kind: .countChanged(1)),
@@ -121,7 +138,7 @@ final class WorkoutConfigTests: XCTestCase {
     func testWorkoutEventsSurviveHistoryEncoding() throws {
         let original = [
             WorkoutEvent(offset: 1.25, kind: .countChanged(3)),
-            WorkoutEvent(offset: 2.0, kind: .announcement("还剩10秒"))
+            WorkoutEvent(offset: 2.0, kind: .announcement("10秒"))
         ]
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode([WorkoutEvent].self, from: data), original)
@@ -149,6 +166,39 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertEqual(reloaded.records.first?.count, 42)
     }
 
+    func testLegacyHistoryRecordDecodesWithoutRealtimeFields() throws {
+        let original = WorkoutRecord(
+            id: UUID(),
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            exercise: .sitUp,
+            duration: 60,
+            recordedDuration: nil,
+            recordingPipelineVersion: nil,
+            count: 30,
+            endReason: .timerFinished,
+            videoState: .ready,
+            videoFilename: "old.mov",
+            sourceVideoFilename: nil,
+            processingConfig: nil,
+            processingEvents: nil,
+            errorMessage: nil,
+            savedToPhotos: true
+        )
+        let encoded = try JSONEncoder().encode(original)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "recordedDuration")
+        object.removeValue(forKey: "recordingPipelineVersion")
+
+        let decoded = try JSONDecoder().decode(
+            WorkoutRecord.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertNil(decoded.recordedDuration)
+        XCTAssertNil(decoded.recordingPipelineVersion)
+        XCTAssertEqual(decoded.count, 30)
+        XCTAssertTrue(decoded.savedToPhotos)
+    }
+
     func testFirstAnnouncementKeepsPrimaryVolume() {
         XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 0), 0.75)
     }
@@ -156,6 +206,58 @@ final class WorkoutConfigTests: XCTestCase {
     func testLaterAnnouncementsUseLowerOverlappingVolume() {
         XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 1), 0.45)
         XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 3), 0.45)
+    }
+
+    func testAudioLevelPolicyBoostsQuietSpeechWithoutAmplifyingNoiseFloor() {
+        XCTAssertEqual(WorkoutAudioLevelPolicy.desiredGain(forRMS: 0.001), 1)
+        XCTAssertEqual(WorkoutAudioLevelPolicy.desiredGain(forRMS: 0.158), 1, accuracy: 0.001)
+        XCTAssertEqual(
+            WorkoutAudioLevelPolicy.desiredGain(forRMS: 0.01),
+            WorkoutAudioLevelPolicy.maximumGain,
+            accuracy: 0.001
+        )
+        XCTAssertLessThan(WorkoutAudioLevelPolicy.desiredGain(forRMS: 0.5), 1)
+        XCTAssertEqual(WorkoutAudioLevelPolicy.peakLimit, 0.891)
+    }
+
+    func testWhistleEnvelopeStartsAndEndsAtSilence() {
+        XCTAssertEqual(RealtimeRecordingWriter.whistleSample(at: -0.01), 0)
+        XCTAssertEqual(RealtimeRecordingWriter.whistleSample(at: 0), 0)
+        XCTAssertNotEqual(RealtimeRecordingWriter.whistleSample(at: 0.1), 0)
+        XCTAssertEqual(RealtimeRecordingWriter.whistleSample(at: 0.38), 0)
+    }
+
+    func testRealtimeWriterCreatesPlayableMovieWithOverlayAndWhistle() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RealtimeWriterTest-\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = RealtimeRecordingWriter()
+        writer.updateOverlay(RecordingOverlaySnapshot(timeText: "00:02", count: 7))
+        writer.arm(url: url, includeMicrophone: false)
+        let start = 1_000.0
+        for frame in 0..<60 {
+            if frame == 45 { writer.scheduleWhistle(atUptime: start + 1.5) }
+            writer.appendVideo(try makeVideoSample(pts: start + Double(frame) / 30))
+        }
+        let finish = try await withCheckedThrowingContinuation { continuation in
+            writer.finish { continuation.resume(with: $0) }
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: finish.url.path))
+        XCTAssertGreaterThan(finish.recordedDuration, 1.8)
+        let asset = AVURLAsset(url: finish.url)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        let assetDuration = try await asset.load(.duration)
+        XCTAssertEqual(videoTracks.count, 1)
+        XCTAssertEqual(audioTracks.count, 1)
+        XCTAssertGreaterThan(CMTimeGetSeconds(assetDuration), 1.8)
+        XCTAssertLessThan(CMTimeGetSeconds(assetDuration), 2.2)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        let frame = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertGreaterThan(frame.height, 0)
     }
 
     func testSitUpCounterCountsOnlyCompleteCycles() {
@@ -283,5 +385,47 @@ final class WorkoutConfigTests: XCTestCase {
 
     private func point(_ x: Double, _ y: Double, confidence: Double = 0.95) -> PosePoint {
         PosePoint(x: x, y: y, confidence: confidence)
+    }
+
+    private func makeVideoSample(pts: TimeInterval) throws -> CMSampleBuffer {
+        var pixelBuffer: CVPixelBuffer?
+        let attributes: [CFString: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:]
+        ]
+        XCTAssertEqual(
+            CVPixelBufferCreate(kCFAllocatorDefault, 720, 1280, kCVPixelFormatType_32BGRA, attributes as CFDictionary, &pixelBuffer),
+            kCVReturnSuccess
+        )
+        let buffer = try XCTUnwrap(pixelBuffer)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        if let address = CVPixelBufferGetBaseAddress(buffer) {
+            memset(address, 96, CVPixelBufferGetDataSize(buffer))
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+
+        var description: CMVideoFormatDescription?
+        XCTAssertEqual(
+            CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: buffer, formatDescriptionOut: &description),
+            noErr
+        )
+        var timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 30),
+            presentationTimeStamp: CMTime(seconds: pts, preferredTimescale: 600),
+            decodeTimeStamp: .invalid
+        )
+        var sampleBuffer: CMSampleBuffer?
+        XCTAssertEqual(
+            CMSampleBufferCreateReadyWithImageBuffer(
+                allocator: kCFAllocatorDefault,
+                imageBuffer: buffer,
+                formatDescription: try XCTUnwrap(description),
+                sampleTiming: &timing,
+                sampleBufferOut: &sampleBuffer
+            ),
+            noErr
+        )
+        return try XCTUnwrap(sampleBuffer)
     }
 }
