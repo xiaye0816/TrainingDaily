@@ -4,11 +4,11 @@ import UIKit
 @testable import TianTianCheckIn
 
 final class WorkoutConfigTests: XCTestCase {
-    func testRootFlowShowsOneSecondSplashThenDismisses() {
+    func testRootFlowShowsHalfSecondSplashThenDismisses() {
         var flow = RootFlowState()
 
         XCTAssertTrue(flow.isShowingSplash)
-        XCTAssertEqual(RootFlowState.splashDurationNanoseconds, 1_000_000_000)
+        XCTAssertEqual(RootFlowState.splashDurationNanoseconds, 500_000_000)
 
         flow.dismissSplash()
         XCTAssertFalse(flow.isShowingSplash)
@@ -17,7 +17,7 @@ final class WorkoutConfigTests: XCTestCase {
     func testNativeLaunchScreenUsesLightStoryboardAndSharedAssets() {
         XCTAssertEqual(
             Bundle.main.object(forInfoDictionaryKey: "UILaunchStoryboardName") as? String,
-            "LaunchScreen"
+            "LaunchScreenStable"
         )
         XCTAssertEqual(
             Bundle.main.object(forInfoDictionaryKey: "UIUserInterfaceStyle") as? String,
@@ -70,6 +70,19 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertFalse(config.microphoneEnabled)
         XCTAssertEqual(config.exerciseType, .sitUp)
         XCTAssertEqual(config.countingMode, .manual)
+        XCTAssertEqual(config.finishSoundStyle, .softWhistle)
+    }
+
+    func testFinishSoundSelectionPersistsInConfiguration() throws {
+        var config = WorkoutConfig.default
+        config.finishSoundStyle = .doubleWhistle
+
+        let restored = try JSONDecoder().decode(
+            WorkoutConfig.self,
+            from: JSONEncoder().encode(config)
+        )
+
+        XCTAssertEqual(restored.finishSoundStyle, .doubleWhistle)
     }
 
     func testDefaultTimeAnnouncementSchedule() {
@@ -200,34 +213,68 @@ final class WorkoutConfigTests: XCTestCase {
     }
 
     func testFirstAnnouncementKeepsPrimaryVolume() {
-        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 0), 0.75)
+        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 0), 1)
     }
 
     func testLaterAnnouncementsUseLowerOverlappingVolume() {
-        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 1), 0.45)
-        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 3), 0.45)
+        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 1), 0.65)
+        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 3), 0.65)
     }
 
-    func testAudioLevelPolicyBoostsQuietSpeechWithoutAmplifyingNoiseFloor() {
-        XCTAssertEqual(WorkoutAudioLevelPolicy.desiredGain(forRMS: 0.001), 1)
-        XCTAssertEqual(WorkoutAudioLevelPolicy.desiredGain(forRMS: 0.158), 1, accuracy: 0.001)
-        XCTAssertEqual(
-            WorkoutAudioLevelPolicy.desiredGain(forRMS: 0.01),
-            WorkoutAudioLevelPolicy.maximumGain,
-            accuracy: 0.001
+    func testTingtingVoiceSelectionRejectsElectronicAlternatives() {
+        XCTAssertGreaterThan(
+            MandarinSpeechVoice.qualityRank(.premium),
+            MandarinSpeechVoice.qualityRank(.enhanced)
         )
-        XCTAssertLessThan(WorkoutAudioLevelPolicy.desiredGain(forRMS: 0.5), 1)
-        XCTAssertEqual(WorkoutAudioLevelPolicy.peakLimit, 0.891)
+        XCTAssertTrue(
+            MandarinSpeechVoice.isTingting(
+                identifier: "com.apple.voice.compact.zh-CN.Tingting",
+                name: "婷婷",
+                language: "zh-CN"
+            )
+        )
+        XCTAssertFalse(
+            MandarinSpeechVoice.isTingting(
+                identifier: "com.apple.eloquence.zh-CN.Rocko",
+                name: "Rocko",
+                language: "zh-CN"
+            )
+        )
     }
 
-    func testWhistleEnvelopeStartsAndEndsAtSilence() {
-        XCTAssertEqual(RealtimeRecordingWriter.whistleSample(at: -0.01), 0)
-        XCTAssertEqual(RealtimeRecordingWriter.whistleSample(at: 0), 0)
-        XCTAssertNotEqual(RealtimeRecordingWriter.whistleSample(at: 0.1), 0)
-        XCTAssertEqual(RealtimeRecordingWriter.whistleSample(at: 0.38), 0)
+    func testAudioLevelPolicyLeavesSpeechUntouchedOutsideFinishSound() {
+        XCTAssertEqual(
+            WorkoutAudioLevelPolicy.mixedSample(original: 0.42, finishSound: 0, ducking: 0),
+            0.42
+        )
+        XCTAssertEqual(
+            WorkoutAudioLevelPolicy.mixedSample(original: -0.97, finishSound: 0, ducking: 0),
+            -0.97
+        )
+        XCTAssertLessThanOrEqual(
+            WorkoutAudioLevelPolicy.mixedSample(original: 1, finishSound: 1, ducking: 1),
+            WorkoutAudioLevelPolicy.peakLimit
+        )
+        XCTAssertEqual(
+            WorkoutAudioLevelPolicy.mixedSample(original: 0.5, finishSound: 0, ducking: 1),
+            0.5 * WorkoutAudioLevelPolicy.finishSoundMicrophoneGain,
+            accuracy: 0.0001
+        )
     }
 
-    func testRealtimeWriterCreatesPlayableMovieWithOverlayAndWhistle() async throws {
+    func testFinishSoundChoicesStartAndEndAtSilence() {
+        for style in FinishSoundStyle.allCases where style != .off {
+            XCTAssertEqual(RealtimeRecordingWriter.finishSoundSample(style: style, at: -0.01), 0)
+            XCTAssertEqual(RealtimeRecordingWriter.finishSoundSample(style: style, at: 0), 0)
+            XCTAssertNotEqual(RealtimeRecordingWriter.finishSoundSample(style: style, at: 0.1), 0)
+            XCTAssertEqual(RealtimeRecordingWriter.finishSoundSample(style: style, at: style.duration), 0)
+            XCTAssertEqual(RealtimeRecordingWriter.finishSoundEnvelope(style: style, at: style.duration), 0)
+            XCTAssertLessThanOrEqual(style.duration, WorkoutTimingPolicy.finishTailDuration)
+        }
+        XCTAssertEqual(RealtimeRecordingWriter.finishSoundSample(style: .off, at: 0.1), 0)
+    }
+
+    func testRealtimeWriterCreatesPlayableMovieWithOverlayAndFinishSound() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("RealtimeWriterTest-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -236,8 +283,14 @@ final class WorkoutConfigTests: XCTestCase {
         writer.arm(url: url, includeMicrophone: false)
         let start = 1_000.0
         for frame in 0..<60 {
-            if frame == 45 { writer.scheduleWhistle(atUptime: start + 1.5) }
+            if frame == 30 {
+                writer.updateOverlay(RecordingOverlaySnapshot(timeText: "00:02", count: 9))
+            }
+            if frame == 45 { writer.scheduleFinishSound(.doubleWhistle, atUptime: start + 1.5) }
             writer.appendVideo(try makeVideoSample(pts: start + Double(frame) / 30))
+            // Mirror the camera's real-time delivery cadence so AVAssetWriter does
+            // not intentionally discard nearly every test frame while encoding.
+            try await Task.sleep(for: .milliseconds(34))
         }
         let finish = try await withCheckedThrowingContinuation { continuation in
             writer.finish { continuation.resume(with: $0) }
@@ -255,9 +308,14 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertLessThan(CMTimeGetSeconds(assetDuration), 2.2)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        let frame = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
-        XCTAssertGreaterThan(frame.width, 0)
-        XCTAssertGreaterThan(frame.height, 0)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let earlyFrame = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let laterFrame = try await generator.image(at: CMTime(seconds: 1.5, preferredTimescale: 600)).image
+        XCTAssertGreaterThan(earlyFrame.width, 0)
+        XCTAssertGreaterThan(earlyFrame.height, 0)
+        XCTAssertGreaterThan(brightPixelCount(in: earlyFrame), 100)
+        XCTAssertGreaterThan(changedPixelCount(earlyFrame, laterFrame), 20)
     }
 
     func testSitUpCounterCountsOnlyCompleteCycles() {
@@ -401,7 +459,17 @@ final class WorkoutConfigTests: XCTestCase {
         let buffer = try XCTUnwrap(pixelBuffer)
         CVPixelBufferLockBaseAddress(buffer, [])
         if let address = CVPixelBufferGetBaseAddress(buffer) {
-            memset(address, 96, CVPixelBufferGetDataSize(buffer))
+            let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+            let pixels = address.assumingMemoryBound(to: UInt8.self)
+            for y in 0..<CVPixelBufferGetHeight(buffer) {
+                for x in 0..<CVPixelBufferGetWidth(buffer) {
+                    let offset = y * rowBytes + x * 4
+                    pixels[offset] = 96
+                    pixels[offset + 1] = 96
+                    pixels[offset + 2] = 96
+                    pixels[offset + 3] = 255
+                }
+            }
         }
         CVPixelBufferUnlockBaseAddress(buffer, [])
 
@@ -427,5 +495,42 @@ final class WorkoutConfigTests: XCTestCase {
             noErr
         )
         return try XCTUnwrap(sampleBuffer)
+    }
+
+    private func brightPixelCount(in image: CGImage) -> Int {
+        let bytes = rgbaBytes(image)
+        return stride(from: 0, to: bytes.count, by: 4).reduce(into: 0) { count, index in
+            if max(bytes[index], max(bytes[index + 1], bytes[index + 2])) > 190 {
+                count += 1
+            }
+        }
+    }
+
+    private func changedPixelCount(_ lhs: CGImage, _ rhs: CGImage) -> Int {
+        let lhsBytes = rgbaBytes(lhs)
+        let rhsBytes = rgbaBytes(rhs)
+        return stride(from: 0, to: min(lhsBytes.count, rhsBytes.count), by: 4).reduce(into: 0) { count, index in
+            let delta = abs(Int(lhsBytes[index]) - Int(rhsBytes[index]))
+                + abs(Int(lhsBytes[index + 1]) - Int(rhsBytes[index + 1]))
+                + abs(Int(lhsBytes[index + 2]) - Int(rhsBytes[index + 2]))
+            if delta > 40 { count += 1 }
+        }
+    }
+
+    private func rgbaBytes(_ image: CGImage) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        bytes.withUnsafeMutableBytes { pointer in
+            guard let context = CGContext(
+                data: pointer.baseAddress,
+                width: image.width,
+                height: image.height,
+                bitsPerComponent: 8,
+                bytesPerRow: image.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+        return bytes
     }
 }

@@ -46,6 +46,7 @@ struct WorkoutResult: Equatable, Sendable {
     let count: Int
     let endReason: WorkoutEndReason
     let videoURL: URL?
+    let previewImageData: Data?
 }
 
 struct OverlaySegment: Equatable, Sendable {

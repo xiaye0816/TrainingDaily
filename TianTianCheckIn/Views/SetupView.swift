@@ -113,14 +113,28 @@ struct SetupView: View {
 
             Toggle("时间播报", isOn: $config.timeAnnouncementEnabled)
             if config.timeAnnouncementEnabled {
-                Picker("播报间隔", selection: $config.timeAnnouncementInterval) {
+                SettingMenuRow(
+                    title: "播报间隔",
+                    value: "每 \(config.timeAnnouncementInterval) 秒"
+                ) {
                     ForEach(timeIntervals, id: \.self) { seconds in
-                        Text("\(seconds) 秒").tag(seconds)
+                        Button {
+                            config.timeAnnouncementInterval = seconds
+                        } label: {
+                            if config.timeAnnouncementInterval == seconds {
+                                Label("每 \(seconds) 秒", systemImage: "checkmark")
+                            } else {
+                                Text("每 \(seconds) 秒")
+                            }
+                        }
                     }
                 }
                 Toggle("最后 5 秒逐秒播报", isOn: $config.finalCountdownEnabled)
             }
             Toggle("时间到自动结束", isOn: $config.autoStopAtTimerEnd)
+            if config.autoStopAtTimerEnd {
+                FinishSoundPickerRow(selection: $config.finishSoundStyle)
+            }
         }
     }
 
@@ -134,9 +148,20 @@ struct SetupView: View {
             .pickerStyle(.segmented)
             Toggle("计次播报", isOn: $config.countAnnouncementEnabled)
             if config.countAnnouncementEnabled {
-                Picker("每几次播报", selection: $config.countAnnouncementInterval) {
+                SettingMenuRow(
+                    title: "播报间隔",
+                    value: "每 \(config.countAnnouncementInterval) 次"
+                ) {
                     ForEach(countIntervals, id: \.self) { interval in
-                        Text("每 \(interval) 次").tag(interval)
+                        Button {
+                            config.countAnnouncementInterval = interval
+                        } label: {
+                            if config.countAnnouncementInterval == interval {
+                                Label("每 \(interval) 次", systemImage: "checkmark")
+                            } else {
+                                Text("每 \(interval) 次")
+                            }
+                        }
                     }
                 }
             }
@@ -196,6 +221,106 @@ struct SetupView: View {
                 }
             }
         )
+    }
+}
+
+private struct FinishSoundPickerRow: View {
+    @Binding var selection: FinishSoundStyle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 12) {
+                Text("结束提示音")
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Menu {
+                    ForEach(FinishSoundStyle.allCases) { style in
+                        Button {
+                            selection = style
+                            FinishSoundPlayer.shared.preview(style)
+                        } label: {
+                            if selection == style {
+                                Label(style.title, systemImage: "checkmark")
+                            } else {
+                                Text(style.title)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(selection.title)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(Color.workoutGreen)
+                }
+                .accessibilityLabel("结束提示音，\(selection.title)")
+
+                Button {
+                    FinishSoundPlayer.shared.preview(selection)
+                } label: {
+                    Image(systemName: selection == .off ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
+                .disabled(selection == .off)
+                .accessibilityLabel("试听\(selection.title)")
+            }
+            Text("选择时会自动试听，也可点扬声器重播。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct SettingMenuRow<Items: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let title: String
+    let value: String
+    @ViewBuilder let items: Items
+
+    init(title: String, value: String, @ViewBuilder items: () -> Items) {
+        self.title = title
+        self.value = value
+        self.items = items()
+    }
+
+    var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                    menu.frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Text(title)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    Spacer(minLength: 8)
+                    menu
+                }
+            }
+        }
+    }
+
+    private var menu: some View {
+        Menu {
+            items
+        } label: {
+            HStack(spacing: 5) {
+                Text(value)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(Color.workoutGreen)
+        }
+        .accessibilityLabel("\(title)，\(value)")
     }
 }
 

@@ -33,16 +33,16 @@ enum RealtimeRecordingWriterError: LocalizedError {
 }
 
 enum WorkoutAudioLevelPolicy {
-    static let targetRMS: Float = 0.158
-    static let maximumGain: Float = 5.623
-    static let minimumGain: Float = 0.35
-    static let noiseFloorRMS: Float = 0.00398
-    static let peakLimit: Float = 0.891
-    static let whistleMicrophoneGain: Float = 0.25
+    static let peakLimit: Float = 0.95
+    static let finishSoundMicrophoneGain: Float = 0.08
 
-    static func desiredGain(forRMS rms: Float) -> Float {
-        guard rms >= noiseFloorRMS else { return 1 }
-        return min(max(targetRMS / max(rms, 0.000_1), minimumGain), maximumGain)
+    static func mixedSample(original: Float, finishSound: Float, ducking: Float) -> Float {
+        guard ducking > 0 else { return original }
+        let microphoneGain = 1 - ducking * (1 - finishSoundMicrophoneGain)
+        return min(
+            max(original * microphoneGain + finishSound, -peakLimit),
+            peakLimit
+        )
     }
 }
 
@@ -65,9 +65,9 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
     private var renderedSnapshot: RecordingOverlaySnapshot?
     private var renderedSize = CGSize.zero
     private var overlayImage: CIImage?
-    private var smoothedGain: Float = 1
-    private var whistleStartUptime: TimeInterval?
-    private var syntheticWhistleWasAppended = false
+    private var finishSoundStartUptime: TimeInterval?
+    private var finishSoundStyle = FinishSoundStyle.off
+    private var syntheticFinishSoundWasAppended = false
     private var isArmed = false
     private var isFinishing = false
 
@@ -84,10 +84,12 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         snapshotLock.unlock()
     }
 
-    func scheduleWhistle(atUptime uptime: TimeInterval) {
-        whistleStartUptime = uptime
+    func scheduleFinishSound(_ style: FinishSoundStyle, atUptime uptime: TimeInterval) {
+        guard style != .off else { return }
+        finishSoundStyle = style
+        finishSoundStartUptime = uptime
         if !includeMicrophone {
-            appendSyntheticWhistleIfPossible(atUptime: uptime)
+            appendSyntheticFinishSoundIfPossible(atUptime: uptime)
         }
     }
 
@@ -162,8 +164,8 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
             return
         }
         isFinishing = true
-        if !includeMicrophone, let whistleStartUptime, !syntheticWhistleWasAppended {
-            appendSyntheticWhistleIfPossible(atUptime: whistleStartUptime)
+        if !includeMicrophone, let finishSoundStartUptime, !syntheticFinishSoundWasAppended {
+            appendSyntheticFinishSoundIfPossible(atUptime: finishSoundStartUptime)
         }
         guard let assetWriter, let outputURL, let firstVideoPTS else {
             completion(.failure(RealtimeRecordingWriterError.missingVideoFrame))
@@ -291,8 +293,8 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         }
         guard let cgImage = image.cgImage else { return nil }
         overlayImage = CIImage(cgImage: cgImage)
-            .transformed(by: CGAffineTransform(translationX: 0, y: size.height))
             .transformed(by: CGAffineTransform(scaleX: 1, y: -1))
+            .transformed(by: CGAffineTransform(translationX: 0, y: size.height))
         return overlayImage
     }
 
@@ -359,72 +361,138 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
 
     private func process(samples: UnsafeMutablePointer<Float>, count: Int, sampleRate: Double, channels: Int, startPTS: TimeInterval) {
         guard count > 0 else { return }
-        var sum: Float = 0
-        for index in 0..<count { sum += samples[index] * samples[index] }
-        updateSmoothedGain(rms: sqrt(sum / Float(count)))
         for index in 0..<count {
             let uptime = startPTS + Double(index / channels) / sampleRate
-            let whistle = whistleValue(atUptime: uptime)
-            let microphoneGain = whistle == 0 ? smoothedGain : smoothedGain * WorkoutAudioLevelPolicy.whistleMicrophoneGain
-            samples[index] = min(max(samples[index] * microphoneGain + whistle, -WorkoutAudioLevelPolicy.peakLimit), WorkoutAudioLevelPolicy.peakLimit)
+            let mix = finishSoundMix(atUptime: uptime)
+            samples[index] = WorkoutAudioLevelPolicy.mixedSample(
+                original: samples[index],
+                finishSound: mix.sample,
+                ducking: mix.ducking
+            )
         }
     }
 
     private func process(samples: UnsafeMutablePointer<Int16>, count: Int, sampleRate: Double, channels: Int, startPTS: TimeInterval) {
         guard count > 0 else { return }
-        var sum: Float = 0
-        for index in 0..<count {
-            let value = Float(samples[index]) / Float(Int16.max)
-            sum += value * value
-        }
-        updateSmoothedGain(rms: sqrt(sum / Float(count)))
         for index in 0..<count {
             let uptime = startPTS + Double(index / channels) / sampleRate
-            let whistle = whistleValue(atUptime: uptime)
+            let mix = finishSoundMix(atUptime: uptime)
             let original = Float(samples[index]) / Float(Int16.max)
-            let microphoneGain = whistle == 0 ? smoothedGain : smoothedGain * WorkoutAudioLevelPolicy.whistleMicrophoneGain
-            let mixed = min(max(original * microphoneGain + whistle, -WorkoutAudioLevelPolicy.peakLimit), WorkoutAudioLevelPolicy.peakLimit)
+            let mixed = WorkoutAudioLevelPolicy.mixedSample(
+                original: original,
+                finishSound: mix.sample,
+                ducking: mix.ducking
+            )
             samples[index] = Int16(mixed * Float(Int16.max))
         }
     }
 
-    private func updateSmoothedGain(rms: Float) {
-        let desired = WorkoutAudioLevelPolicy.desiredGain(forRMS: rms)
-        let coefficient: Float = desired < smoothedGain ? 0.35 : 0.08
-        smoothedGain += (desired - smoothedGain) * coefficient
+    private func finishSoundMix(atUptime uptime: TimeInterval) -> (sample: Float, ducking: Float) {
+        guard let finishSoundStartUptime else { return (0, 0) }
+        let time = uptime - finishSoundStartUptime
+        return (
+            Self.finishSoundSample(style: finishSoundStyle, at: time),
+            Self.finishSoundEnvelope(style: finishSoundStyle, at: time)
+        )
     }
 
-    private func whistleValue(atUptime uptime: TimeInterval) -> Float {
-        guard let whistleStartUptime else { return 0 }
-        return Self.whistleSample(at: uptime - whistleStartUptime)
+    static func finishSoundEnvelope(style: FinishSoundStyle, at time: TimeInterval) -> Float {
+        guard style != .off, time >= 0, time < style.duration else { return 0 }
+        let attack = min(1, time / 0.025)
+        let release = min(1, (style.duration - time) / 0.075)
+        return Float(max(0, min(attack, release)))
     }
 
-    static func whistleSample(at time: TimeInterval) -> Float {
-        let duration = 0.38
-        guard time >= 0, time < duration else { return 0 }
-        let attack = min(1, time / 0.018)
-        let release = min(1, (duration - time) / 0.055)
-        let envelope = Float(max(0, min(attack, release)))
-        let frequency = 2_650 + 420 * (time / duration) + 55 * sin(2 * .pi * 7 * time)
-        let fundamental = sin(2 * .pi * frequency * time)
-        let harmonic = sin(2 * .pi * frequency * 2.02 * time)
-        return Float(fundamental * 0.48 + harmonic * 0.12) * envelope
+    static func finishSoundSample(style: FinishSoundStyle, at time: TimeInterval) -> Float {
+        guard style != .off, time >= 0, time < style.duration else { return 0 }
+
+        switch style {
+        case .softWhistle:
+            let envelope = toneEnvelope(time: time, start: 0, duration: style.duration, attack: 0.035, release: 0.10)
+            return whistleTone(time: time, baseFrequency: 1_880, sweep: 120, vibratoDepth: 18, gain: 0.42) * envelope
+
+        case .crispWhistle:
+            let envelope = toneEnvelope(time: time, start: 0, duration: style.duration, attack: 0.018, release: 0.065)
+            return whistleTone(time: time, baseFrequency: 2_420, sweep: 260, vibratoDepth: 26, gain: 0.38) * envelope
+
+        case .doubleWhistle:
+            let first = doubleWhistleBurst(time: time, start: 0, frequency: 2_050)
+            let second = doubleWhistleBurst(time: time, start: 0.26, frequency: 2_260)
+            return first + second
+
+        case .gentleChime:
+            let attack = min(1, time / 0.012)
+            let decay = exp(-4.4 * time)
+            let first = sin(2 * Double.pi * 880 * time)
+            let second = sin(2 * Double.pi * 1_320 * time) * 0.34
+            return Float((first + second) * attack * decay * 0.34)
+
+        case .off:
+            return 0
+        }
     }
 
-    private func appendSyntheticWhistleIfPossible(atUptime uptime: TimeInterval) {
-        guard !syntheticWhistleWasAppended,
+    private static func whistleTone(
+        time: TimeInterval,
+        baseFrequency: Double,
+        sweep: Double,
+        vibratoDepth: Double,
+        gain: Double
+    ) -> Float {
+        let vibratoRate = 6.2
+        let phaseCycles = baseFrequency * time
+            + sweep * time * time / 2
+            + vibratoDepth / (2 * Double.pi * vibratoRate)
+                * (1 - cos(2 * Double.pi * vibratoRate * time))
+        let fundamental = sin(2 * Double.pi * phaseCycles)
+        let breathHarmonic = sin(2 * Double.pi * phaseCycles * 2.005) * 0.10
+        return Float((fundamental + breathHarmonic) * gain)
+    }
+
+    private static func doubleWhistleBurst(time: TimeInterval, start: TimeInterval, frequency: Double) -> Float {
+        let duration = 0.18
+        let localTime = time - start
+        let envelope = toneEnvelope(time: time, start: start, duration: duration, attack: 0.022, release: 0.065)
+        guard envelope > 0 else { return 0 }
+        return whistleTone(
+            time: localTime,
+            baseFrequency: frequency,
+            sweep: 90,
+            vibratoDepth: 14,
+            gain: 0.36
+        ) * envelope
+    }
+
+    private static func toneEnvelope(
+        time: TimeInterval,
+        start: TimeInterval,
+        duration: TimeInterval,
+        attack: TimeInterval,
+        release: TimeInterval
+    ) -> Float {
+        let localTime = time - start
+        guard localTime >= 0, localTime < duration else { return 0 }
+        let fadeIn = min(1, localTime / attack)
+        let fadeOut = min(1, (duration - localTime) / release)
+        let shaped = sin(Double.pi / 2 * max(0, min(fadeIn, fadeOut)))
+        return Float(shaped * shaped)
+    }
+
+    private func appendSyntheticFinishSoundIfPossible(atUptime uptime: TimeInterval) {
+        guard !syntheticFinishSoundWasAppended,
+              finishSoundStyle != .off,
               let assetWriter, assetWriter.status == .writing,
               let audioInput, audioInput.isReadyForMoreMediaData else { return }
         let sampleRate: Int32 = 48_000
-        let frameCount = Int(Double(sampleRate) * 0.38)
+        let frameCount = Int(Double(sampleRate) * finishSoundStyle.duration)
         var samples = [Int16](repeating: 0, count: frameCount)
         for index in samples.indices {
-            let value = Self.whistleSample(at: Double(index) / Double(sampleRate))
+            let value = Self.finishSoundSample(style: finishSoundStyle, at: Double(index) / Double(sampleRate))
             samples[index] = Int16(min(max(value, -WorkoutAudioLevelPolicy.peakLimit), WorkoutAudioLevelPolicy.peakLimit) * Float(Int16.max))
         }
         guard let sampleBuffer = Self.makeAudioSampleBuffer(samples: samples, sampleRate: sampleRate, presentationTime: uptime),
               audioInput.append(sampleBuffer) else { return }
-        syntheticWhistleWasAppended = true
+        syntheticFinishSoundWasAppended = true
     }
 
     private static func makeAudioSampleBuffer(samples: [Int16], sampleRate: Int32, presentationTime: TimeInterval) -> CMSampleBuffer? {
@@ -499,9 +567,9 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         renderedSnapshot = nil
         renderedSize = .zero
         overlayImage = nil
-        smoothedGain = 1
-        whistleStartUptime = nil
-        syntheticWhistleWasAppended = false
+        finishSoundStartUptime = nil
+        finishSoundStyle = .off
+        syntheticFinishSoundWasAppended = false
         isArmed = false
         isFinishing = false
         outputURL = nil
@@ -517,23 +585,40 @@ private final class SendableRealtimeAssetWriter: @unchecked Sendable {
 }
 
 @MainActor
-final class WhistlePlayer {
+final class FinishSoundPlayer {
+    static let shared = FinishSoundPlayer()
+
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
 
-    init() {
+    private init() {
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
     }
 
-    func play() {
-        let frameCount = AVAudioFrameCount(48_000 * 0.38)
+    func preview(_ style: FinishSoundStyle) {
+        guard style != .off else {
+            stop()
+            return
+        }
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default)
+        try? session.setActive(true)
+        play(style)
+    }
+
+    func play(_ style: FinishSoundStyle) {
+        guard style != .off else { return }
+        let frameCount = AVAudioFrameCount(48_000 * style.duration)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
               let channel = buffer.floatChannelData?[0] else { return }
         buffer.frameLength = frameCount
         for index in 0..<Int(frameCount) {
-            channel[index] = RealtimeRecordingWriter.whistleSample(at: Double(index) / 48_000)
+            channel[index] = RealtimeRecordingWriter.finishSoundSample(
+                style: style,
+                at: Double(index) / 48_000
+            )
         }
         do {
             if !engine.isRunning { try engine.start() }

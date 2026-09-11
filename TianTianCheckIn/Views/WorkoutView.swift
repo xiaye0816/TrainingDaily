@@ -220,7 +220,10 @@ struct WorkoutView: View {
     private var sessionHeader: some View {
         HStack(spacing: 12) {
             if session.phase == .finishing {
-                Label("哨音收尾", systemImage: "flag.checkered")
+                Label(
+                    session.currentConfig.finishSoundStyle == .off ? "即将完成" : "提示音收尾",
+                    systemImage: "flag.checkered"
+                )
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.yellow)
             }

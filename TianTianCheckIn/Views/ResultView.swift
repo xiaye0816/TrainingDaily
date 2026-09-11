@@ -79,12 +79,14 @@ struct ResultView: View {
     @ViewBuilder
     private var videoPreview: some View {
         if let url = session.result?.videoURL {
-            VideoPlayer(player: AVPlayer(url: url))
+            WorkoutVideoPreview(
+                url: url,
+                initialPosterData: session.result?.previewImageData
+            )
                 .aspectRatio(9 / 16, contentMode: .fit)
                 .frame(maxHeight: 460)
                 .background(.black)
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .onAppear { AppAudioSession.activateVideoPlayback() }
         } else if session.isVideoProcessing {
             ZStack {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -136,5 +138,118 @@ struct ResultView: View {
                 .monospacedDigit()
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+enum VideoPosterGenerator {
+    static func jpegData(for url: URL) async -> Data? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        do {
+            let image = try await generator.image(at: .zero).image
+            return UIImage(cgImage: image).jpegData(compressionQuality: 0.82)
+        } catch {
+            return nil
+        }
+    }
+}
+
+@MainActor
+private final class WorkoutVideoPreviewModel: ObservableObject {
+    let player: AVPlayer
+    @Published var poster: UIImage?
+    @Published var isShowingPoster = true
+    private let url: URL
+    private var timeObserver: Any?
+    private var hasPrepared = false
+
+    init(url: URL, initialPosterData: Data?) {
+        self.url = url
+        player = AVPlayer(url: url)
+        poster = initialPosterData.flatMap(UIImage.init(data:))
+    }
+
+    deinit {
+        if let timeObserver {
+            player.removeTimeObserver(timeObserver)
+        }
+    }
+
+    func prepare() {
+        guard !hasPrepared else { return }
+        hasPrepared = true
+        AppAudioSession.activateVideoPlayback()
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(value: 1, timescale: 60),
+            queue: .main
+        ) { [weak self] time in
+            guard time.seconds > 0.02 else { return }
+            Task { @MainActor [weak self] in
+                self?.isShowingPoster = false
+            }
+        }
+        if poster == nil {
+            Task { [weak self] in
+                guard let self,
+                      let data = await VideoPosterGenerator.jpegData(for: self.url),
+                      let image = UIImage(data: data) else { return }
+                self.poster = image
+            }
+        }
+    }
+
+    func play() {
+        player.play()
+    }
+
+    func pause() {
+        player.pause()
+    }
+}
+
+struct WorkoutVideoPreview: View {
+    @StateObject private var model: WorkoutVideoPreviewModel
+
+    init(url: URL, initialPosterData: Data? = nil) {
+        _model = StateObject(
+            wrappedValue: WorkoutVideoPreviewModel(
+                url: url,
+                initialPosterData: initialPosterData
+            )
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            VideoPlayer(player: model.player)
+            if model.isShowingPoster {
+                Group {
+                    if let poster = model.poster {
+                        Image(uiImage: poster)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Color.workoutInk
+                            .overlay {
+                                ProgressView().tint(.white)
+                            }
+                    }
+                }
+                .clipped()
+                Button {
+                    model.play()
+                } label: {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 58))
+                        .foregroundStyle(.white, .black.opacity(0.48))
+                        .shadow(radius: 5)
+                }
+                .accessibilityLabel("播放视频")
+            }
+        }
+        .onAppear { model.prepare() }
+        .onDisappear { model.pause() }
     }
 }

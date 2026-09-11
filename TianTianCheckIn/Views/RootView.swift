@@ -1,7 +1,8 @@
 import SwiftUI
+import UIKit
 
 struct RootFlowState: Equatable {
-    static let splashDurationNanoseconds: UInt64 = 1_000_000_000
+    static let splashDurationNanoseconds: UInt64 = 500_000_000
 
     private(set) var isShowingSplash = true
 
@@ -20,7 +21,12 @@ struct RootView: View {
             mainContent
 
             if flow.isShowingSplash {
-                BrandSplashView()
+                NativeLaunchSplashView()
+                    .ignoresSafeArea()
+                    .transaction { transaction in
+                        transaction.animation = nil
+                        transaction.disablesAnimations = true
+                    }
                     .zIndex(1)
             }
         }
@@ -33,7 +39,11 @@ struct RootView: View {
             } catch {
                 return
             }
-            flow.dismissSplash()
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                flow.dismissSplash()
+            }
         }
     }
 
@@ -54,33 +64,18 @@ struct RootView: View {
     }
 }
 
-private struct BrandSplashView: View {
-    var body: some View {
-        ZStack {
-            splashBackground
-
-            Image("SplashBrand")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 317, height: 268)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("天天打卡，中小学生体测训练记录")
+private struct NativeLaunchSplashView: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        UIStoryboard(name: "LaunchScreenStable", bundle: .main).instantiateInitialViewController()
+            ?? fallbackController()
     }
 
-    private var splashBackground: some View {
-        ZStack {
-            Image("SplashBackground")
-                .resizable(resizingMode: .stretch)
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 
-            Image("SplashGlow")
-                .resizable()
-                .frame(width: 430, height: 430)
-                .offset(x: 175, y: -245)
-        }
+    private func fallbackController() -> UIViewController {
+        let controller = UIViewController()
+        controller.view.backgroundColor = UIColor(red: 0.98, green: 0.99, blue: 0.96, alpha: 1)
+        return controller
     }
 }
 

@@ -84,12 +84,11 @@ private struct HistoryDetailView: View {
             if let record {
                 VStack(spacing: 18) {
                     if let url = history.videoURL(for: record) {
-                        VideoPlayer(player: AVPlayer(url: url))
+                        WorkoutVideoPreview(url: url)
                             .aspectRatio(9 / 16, contentMode: .fit)
                             .frame(maxHeight: 480)
                             .background(.black)
                             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                            .onAppear { AppAudioSession.activateVideoPlayback() }
                     } else {
                         statusCard(record)
                     }

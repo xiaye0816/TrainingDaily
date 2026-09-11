@@ -34,7 +34,7 @@ final class WorkoutSessionController: ObservableObject {
     let cameraRecorder = CameraRecorder()
 
     private let speech = SpeechCoordinator()
-    private let whistlePlayer = WhistlePlayer()
+    private let finishSoundPlayer = FinishSoundPlayer.shared
     private let poseRecognition = PoseRecognitionEngine()
     private var config = WorkoutConfig.default
     private var events: [WorkoutEvent] = []
@@ -347,10 +347,17 @@ final class WorkoutSessionController: ObservableObject {
         remainingSeconds = 0
         updateRecordingOverlay()
         speech.stop()
-        let whistleUptime = ProcessInfo.processInfo.systemUptime
-        cameraRecorder.scheduleFinishWhistle(atUptime: whistleUptime)
-        whistlePlayer.play()
-        events.append(WorkoutEvent(offset: currentOffset, kind: .announcement("结束哨音")))
+        if config.finishSoundStyle != .off {
+            let finishSoundUptime = ProcessInfo.processInfo.systemUptime
+            cameraRecorder.scheduleFinishSound(config.finishSoundStyle, atUptime: finishSoundUptime)
+            finishSoundPlayer.play(config.finishSoundStyle)
+            events.append(
+                WorkoutEvent(
+                    offset: currentOffset,
+                    kind: .announcement("结束提示音：\(config.finishSoundStyle.title)")
+                )
+            )
+        }
         try? await Task.sleep(
             nanoseconds: UInt64(WorkoutTimingPolicy.finishTailDuration * 1_000_000_000)
         )
@@ -383,6 +390,7 @@ final class WorkoutSessionController: ObservableObject {
 
         do {
             var videoURL: URL?
+            var previewImageData: Data?
             if config.recordingEnabled {
                 let finished = try await cameraRecorder.stopRecording()
                 rawURL = finished.url
@@ -399,6 +407,9 @@ final class WorkoutSessionController: ObservableObject {
                 currentRecordID = historyRecord.id
                 rawURL = nil
                 videoURL = WorkoutHistoryStore.shared.videoURL(for: historyRecord)
+                if let videoURL {
+                    previewImageData = await VideoPosterGenerator.jpegData(for: videoURL)
+                }
             } else {
                 let historyRecord = WorkoutHistoryStore.shared.addWithoutVideo(
                     startedAt: workoutStartedAt,
@@ -416,7 +427,8 @@ final class WorkoutSessionController: ObservableObject {
                 duration: resultDuration,
                 count: count,
                 endReason: reason,
-                videoURL: videoURL
+                videoURL: videoURL,
+                previewImageData: previewImageData
             )
             isVideoProcessing = false
             phase = .result
@@ -440,7 +452,8 @@ final class WorkoutSessionController: ObservableObject {
                 duration: resultDuration,
                 count: count,
                 endReason: reason,
-                videoURL: nil
+                videoURL: nil,
+                previewImageData: nil
             )
             errorMessage = "录像写入失败，成绩已保留：\(error.localizedDescription)"
             phase = .result
@@ -477,7 +490,7 @@ final class WorkoutSessionController: ObservableObject {
         announcedSeconds = []
         lastCountEventOffset = 0
         isFinalizing = false
-        whistlePlayer.stop()
+        finishSoundPlayer.stop()
         recognitionSessionID = UUID()
     }
 

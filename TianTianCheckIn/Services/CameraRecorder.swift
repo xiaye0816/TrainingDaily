@@ -48,6 +48,27 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     private var configuredWithAudio = false
     private var poseAnalyzer: PoseRecognitionEngine?
     private var currentOrientation = UIDeviceOrientation.portrait
+    private var audioRouteObserver: NSObjectProtocol?
+
+    override init() {
+        super.init()
+        audioRouteObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.sessionQueue.async { [weak self] in
+                self?.enforceBuiltInSpeakerWhenNeeded()
+            }
+        }
+    }
+
+    deinit {
+        if let audioRouteObserver {
+            NotificationCenter.default.removeObserver(audioRouteObserver)
+        }
+    }
 
     func prepare(includeAudio: Bool, poseAnalyzer: PoseRecognitionEngine? = nil) async throws {
         guard await Self.requestAccess(for: .video) else {
@@ -121,9 +142,9 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         recordingWriter.updateOverlay(snapshot)
     }
 
-    func scheduleFinishWhistle(atUptime uptime: TimeInterval) {
+    func scheduleFinishSound(_ style: FinishSoundStyle, atUptime uptime: TimeInterval) {
         mediaQueue.async { [weak self] in
-            self?.recordingWriter.scheduleWhistle(atUptime: uptime)
+            self?.recordingWriter.scheduleFinishSound(style, atUptime: uptime)
         }
     }
 
@@ -211,9 +232,11 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
            configuredWithAudio == includeAudio {
             self.poseAnalyzer = poseAnalyzer
             configureVideoConnections()
+            try configureAudioSession(includeAudio: includeAudio)
             return
         }
 
+        session.automaticallyConfiguresApplicationAudioSession = false
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.inputs.forEach(session.removeInput)
@@ -267,15 +290,33 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         self.poseAnalyzer = poseAnalyzer
         configureVideoConnections()
 
+        try configureAudioSession(includeAudio: includeAudio)
+    }
+
+    private func configureAudioSession(includeAudio: Bool) throws {
         let audioSession = AVAudioSession.sharedInstance()
         if includeAudio {
-            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker])
+            try audioSession.setCategory(.playAndRecord, mode: .videoChat, options: [.defaultToSpeaker])
             try audioSession.setPreferredSampleRate(48_000)
+            try? audioSession.setPreferredIOBufferDuration(0.01)
             try? audioSession.setPreferredInputNumberOfChannels(1)
         } else {
             try audioSession.setCategory(.playback, mode: .spokenAudio)
         }
         try audioSession.setActive(true)
+        enforceBuiltInSpeakerWhenNeeded()
+    }
+
+    private func enforceBuiltInSpeakerWhenNeeded() {
+        guard configuredWithAudio else { return }
+        let audioSession = AVAudioSession.sharedInstance()
+        let outputs = audioSession.currentRoute.outputs
+        let hasExternalOutput = outputs.contains { output in
+            output.portType != .builtInReceiver && output.portType != .builtInSpeaker
+        }
+        guard !hasExternalOutput,
+              !outputs.contains(where: { $0.portType == .builtInSpeaker }) else { return }
+        try? audioSession.overrideOutputAudioPort(.speaker)
     }
 
     private func configureDevice(_ device: AVCaptureDevice) {
