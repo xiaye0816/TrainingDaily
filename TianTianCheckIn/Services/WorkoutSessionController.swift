@@ -23,6 +23,10 @@ final class WorkoutSessionController: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var poseStatus: PoseTrackingStatus = .inactive
     @Published private(set) var isAutomaticCountingActive = false
+    @Published private(set) var zoomOptions: [CameraZoomOption] = []
+    @Published private(set) var selectedZoomFactor: CGFloat = 1
+    @Published private(set) var isVideoProcessing = false
+    @Published private(set) var currentRecordID: UUID?
 
     let cameraRecorder = CameraRecorder()
 
@@ -37,6 +41,7 @@ final class WorkoutSessionController: ObservableObject {
     private var announcedSeconds: Set<Int> = []
     private var lastCountEventOffset: TimeInterval = 0
     private var isFinalizing = false
+    private var workoutStartedAt = Date()
 
     var displayTime: String {
         if config.timerEnabled {
@@ -54,6 +59,7 @@ final class WorkoutSessionController: ObservableObject {
     func prepare(config: WorkoutConfig) {
         resetSessionState()
         self.config = config.normalized
+        workoutStartedAt = Date()
         remainingSeconds = self.config.durationSeconds
         phase = .preparingCamera
         let recognitionSessionID = UUID()
@@ -91,6 +97,7 @@ final class WorkoutSessionController: ObservableObject {
                         includeAudio: self.config.microphoneEnabled,
                         poseAnalyzer: analyzer
                     )
+                    await refreshZoomOptions()
                 }
                 phase = .framing
                 cameraRecorder.updateOrientation(UIDevice.current.orientation)
@@ -108,19 +115,19 @@ final class WorkoutSessionController: ObservableObject {
                 if config.countingMode == .automatic {
                     poseRecognition.pause()
                 }
-                if config.recordingEnabled {
-                    let start = try await cameraRecorder.startRecording(orientation: orientation)
-                    rawStartUptime = start.uptime
-                    rawURL = start.url
-                }
-
                 for number in stride(from: 3, through: 1, by: -1) {
                     phase = .countdown(number)
                     speech.speakPriority("\(number)")
                     try await Task.sleep(nanoseconds: 1_000_000_000)
                 }
 
-                let now = ProcessInfo.processInfo.systemUptime
+                var now = ProcessInfo.processInfo.systemUptime
+                if config.recordingEnabled {
+                    let start = try await cameraRecorder.startRecording(orientation: orientation)
+                    rawStartUptime = start.uptime
+                    rawURL = start.url
+                    now = start.uptime
+                }
                 activeStartUptime = now
                 elapsedSeconds = 0
                 remainingSeconds = config.durationSeconds
@@ -160,7 +167,7 @@ final class WorkoutSessionController: ObservableObject {
 
         if config.countAnnouncementEnabled,
            count.isMultiple(of: config.countAnnouncementInterval) {
-            let text = "\(count)次"
+            let text = "\(count)"
             if speech.speakCount(text) {
                 events.append(WorkoutEvent(offset: safeOffset, kind: .announcement(text)))
             }
@@ -186,9 +193,35 @@ final class WorkoutSessionController: ObservableObject {
         Task {
             do {
                 try await cameraRecorder.switchCamera()
+                await refreshZoomOptions()
             } catch {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    func selectZoom(_ option: CameraZoomOption) {
+        guard phase == .framing else { return }
+        selectedZoomFactor = option.deviceFactor
+        Task { await cameraRecorder.setZoomFactor(option.deviceFactor) }
+        if config.countingMode == .automatic {
+            poseRecognition.resetForCameraChange()
+        }
+    }
+
+    func setPinchZoom(_ factor: CGFloat) {
+        guard phase == .framing else { return }
+        let bounds = zoomOptions.map(\.deviceFactor)
+        guard let minimum = bounds.min(), let maximum = bounds.max() else { return }
+        let resolved = min(max(factor, minimum), maximum)
+        selectedZoomFactor = resolved
+        Task { await cameraRecorder.setZoomFactor(resolved) }
+    }
+
+    private func refreshZoomOptions() async {
+        zoomOptions = await cameraRecorder.availableZoomOptions()
+        if let oneTimes = zoomOptions.first(where: { $0.label == "1×" }) ?? zoomOptions.first {
+            selectedZoomFactor = oneTimes.deviceFactor
         }
     }
 
@@ -211,6 +244,9 @@ final class WorkoutSessionController: ObservableObject {
             do {
                 try await PhotoLibrarySaver.saveVideo(at: url)
                 isSaved = true
+                if let currentRecordID {
+                    WorkoutHistoryStore.shared.markSavedToPhotos(currentRecordID)
+                }
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
             } catch {
                 errorMessage = error.localizedDescription
@@ -278,6 +314,7 @@ final class WorkoutSessionController: ObservableObject {
 
     private func finalize(reason: WorkoutEndReason) async {
         guard !isFinalizing, phase == .active else { return }
+        let finalizationSessionID = recognitionSessionID
         isFinalizing = true
         phase = .processing
         isAutomaticCountingActive = false
@@ -295,28 +332,65 @@ final class WorkoutSessionController: ObservableObject {
             if config.recordingEnabled {
                 let finishedRawURL = try await cameraRecorder.stopRecording()
                 rawURL = finishedRawURL
-                let trimStart = max(0, (activeStartUptime ?? 0) - (rawStartUptime ?? 0))
-                videoURL = try await VideoComposer.compose(
+                cameraRecorder.stopSession()
+                let historyRecord = try WorkoutHistoryStore.shared.beginVideoProcessing(
                     rawURL: finishedRawURL,
-                    trimStart: trimStart,
-                    actualDuration: actualDuration,
+                    startedAt: workoutStartedAt,
+                    duration: actualDuration,
+                    count: count,
+                    reason: reason,
                     config: config,
                     events: events
                 )
+                currentRecordID = historyRecord.id
+                rawURL = nil
+                result = WorkoutResult(
+                    duration: actualDuration,
+                    count: count,
+                    endReason: reason,
+                    videoURL: nil
+                )
+                isVideoProcessing = true
+                phase = .result
+                await WorkoutHistoryStore.shared.processVideo(historyRecord.id)
+                if let updated = WorkoutHistoryStore.shared.records.first(where: { $0.id == historyRecord.id }) {
+                    videoURL = WorkoutHistoryStore.shared.videoURL(for: updated)
+                    if updated.videoState == .failed, recognitionSessionID == finalizationSessionID {
+                        errorMessage = "视频处理失败：\(updated.errorMessage ?? "请在历史记录中重试")"
+                    }
+                }
+            } else {
+                let historyRecord = WorkoutHistoryStore.shared.addWithoutVideo(
+                    startedAt: workoutStartedAt,
+                    duration: actualDuration,
+                    count: count,
+                    reason: reason,
+                    config: config
+                )
+                currentRecordID = historyRecord.id
             }
 
             cameraRecorder.stopSession()
+            guard recognitionSessionID == finalizationSessionID else { return }
             result = WorkoutResult(
                 duration: actualDuration,
                 count: count,
                 endReason: reason,
                 videoURL: videoURL
             )
+            isVideoProcessing = false
             phase = .result
             isFinalizing = false
         } catch {
+            guard recognitionSessionID == finalizationSessionID else { return }
             isFinalizing = false
-            fail(error)
+            isVideoProcessing = false
+            if result != nil {
+                errorMessage = "视频处理失败：\(error.localizedDescription)"
+                phase = .result
+            } else {
+                fail(error)
+            }
         }
     }
 
@@ -340,6 +414,10 @@ final class WorkoutSessionController: ObservableObject {
         errorMessage = nil
         poseStatus = .inactive
         isAutomaticCountingActive = false
+        zoomOptions = []
+        selectedZoomFactor = 1
+        isVideoProcessing = false
+        currentRecordID = nil
         activeStartUptime = nil
         rawStartUptime = nil
         announcedSeconds = []
@@ -373,7 +451,7 @@ final class WorkoutSessionController: ObservableObject {
         if let rawURL {
             try? fileManager.removeItem(at: rawURL)
         }
-        if !keepOutput, let outputURL = result?.videoURL {
+        if !keepOutput, currentRecordID == nil, let outputURL = result?.videoURL {
             try? fileManager.removeItem(at: outputURL)
         }
         rawURL = nil

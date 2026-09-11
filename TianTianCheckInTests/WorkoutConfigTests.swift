@@ -118,36 +118,44 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertEqual(segments.first?.label, "0 次")
     }
 
-    func testPriorityAnnouncementDropsCountsUntilItFinishes() {
-        var arbiter = SpeechAnnouncementArbiter()
-        let speakingCount = UUID()
-        let timeAnnouncement = UUID()
-
-        XCTAssertTrue(arbiter.beginCount(token: speakingCount))
-
-        arbiter.beginPriority(token: timeAnnouncement)
-
-        XCTAssertTrue(arbiter.isPriorityActive)
-        XCTAssertFalse(arbiter.beginCount(token: UUID()))
-
-        // A delayed cancellation callback from the interrupted count must not
-        // clear the newer time announcement.
-        arbiter.finish(token: speakingCount)
-        XCTAssertTrue(arbiter.isPriorityActive)
-
-        arbiter.finish(token: timeAnnouncement)
-        XCTAssertTrue(arbiter.beginCount(token: UUID()))
+    func testWorkoutEventsSurviveHistoryEncoding() throws {
+        let original = [
+            WorkoutEvent(offset: 1.25, kind: .countChanged(3)),
+            WorkoutEvent(offset: 2.0, kind: .announcement("还剩10秒"))
+        ]
+        let data = try JSONEncoder().encode(original)
+        XCTAssertEqual(try JSONDecoder().decode([WorkoutEvent].self, from: data), original)
     }
 
-    func testCountAnnouncementsAreNeverQueued() {
-        var arbiter = SpeechAnnouncementArbiter()
-        let firstCount = UUID()
+    @MainActor
+    func testHistoryPersistsAWorkoutWithoutVideo() throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TrainingDailyHistoryTests-(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
 
-        XCTAssertTrue(arbiter.beginCount(token: firstCount))
-        XCTAssertFalse(arbiter.beginCount(token: UUID()))
+        let store = WorkoutHistoryStore(baseDirectory: baseDirectory)
+        let original = store.addWithoutVideo(
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            duration: 60,
+            count: 42,
+            reason: .timerFinished,
+            config: .default
+        )
+        let reloaded = WorkoutHistoryStore(baseDirectory: baseDirectory)
 
-        arbiter.finish(token: firstCount)
-        XCTAssertTrue(arbiter.beginCount(token: UUID()))
+        XCTAssertEqual(reloaded.records, [original])
+        XCTAssertEqual(reloaded.records.first?.videoState, .expired)
+        XCTAssertEqual(reloaded.records.first?.count, 42)
+    }
+
+    func testFirstAnnouncementKeepsPrimaryVolume() {
+        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 0), 0.75)
+    }
+
+    func testLaterAnnouncementsUseLowerOverlappingVolume() {
+        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 1), 0.45)
+        XCTAssertEqual(SpeechMixPolicy.volume(activeClipCount: 3), 0.45)
     }
 
     func testSitUpCounterCountsOnlyCompleteCycles() {
@@ -217,6 +225,26 @@ final class WorkoutConfigTests: XCTestCase {
 
         sample = BodyPoseSample(captureUptime: 0, points: sample.points, personCount: 2)
         XCTAssertEqual(PoseQualityEvaluator.adjustment(for: sample, exercise: .jumpRope), .multiplePeople)
+    }
+
+    func testJumpRopeFramingDoesNotRequireWrists() {
+        let original = jumpRopeSample(uptime: 0, lift: 0)
+        let withoutWrists = BodyPoseSample(
+            captureUptime: original.captureUptime,
+            points: original.points.filter { $0.key != .leftWrist && $0.key != .rightWrist },
+            personCount: 1
+        )
+        XCTAssertNil(PoseQualityEvaluator.adjustment(for: withoutWrists, exercise: .jumpRope))
+    }
+
+    func testJumpRopeFramingExplainsMissingFeet() {
+        let original = jumpRopeSample(uptime: 0, lift: 0)
+        let missingFeet = BodyPoseSample(
+            captureUptime: original.captureUptime,
+            points: original.points.filter { $0.key != .leftAnkle && $0.key != .rightAnkle },
+            personCount: 1
+        )
+        XCTAssertEqual(PoseQualityEvaluator.adjustment(for: missingFeet, exercise: .jumpRope), .showFeet)
     }
 
     private func sitUpSample(uptime: TimeInterval, isUp: Bool) -> BodyPoseSample {

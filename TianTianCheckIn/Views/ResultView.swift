@@ -9,6 +9,17 @@ struct ResultView: View {
             ScrollView {
                 VStack(spacing: 20) {
                     videoPreview
+                    if session.isVideoProcessing {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("视频正在快速处理中，可以先查看成绩")
+                                .font(.subheadline)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .background(Color.workoutGreen.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
                     summary
 
                     if let message = session.errorMessage {
@@ -60,6 +71,18 @@ struct ResultView: View {
                 .frame(maxHeight: 460)
                 .background(.black)
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        } else if session.isVideoProcessing {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Color.workoutInk)
+                VStack(spacing: 12) {
+                    ProgressView().tint(.white)
+                    Text("相机已关闭\n正在生成视频")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(height: 220)
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)

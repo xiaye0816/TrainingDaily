@@ -1,101 +1,74 @@
 @preconcurrency import AVFAudio
 import Foundation
 
-struct SpeechAnnouncementArbiter {
-    enum ActiveAnnouncement: Equatable {
-        case priority(UUID)
-        case count(UUID)
+/// Pure policy used by the live speech mixer and unit tests. A clip keeps the
+/// gain assigned when it starts; an older clip is never ducked by a new one.
+struct SpeechMixPolicy {
+    static let primaryVolume: Float = 0.75
+    static let overlappingVolume: Float = 0.45
 
-        var token: UUID {
-            switch self {
-            case let .priority(token), let .count(token):
-                return token
-            }
-        }
-    }
-
-    private(set) var activeAnnouncement: ActiveAnnouncement?
-
-    var isPriorityActive: Bool {
-        guard case .priority = activeAnnouncement else { return false }
-        return true
-    }
-
-    mutating func beginPriority(token: UUID) {
-        activeAnnouncement = .priority(token)
-    }
-
-    mutating func beginCount(token: UUID) -> Bool {
-        guard activeAnnouncement == nil else { return false }
-        activeAnnouncement = .count(token)
-        return true
-    }
-
-    mutating func finish(token: UUID) {
-        guard activeAnnouncement?.token == token else { return }
-        activeAnnouncement = nil
-    }
-
-    mutating func reset() {
-        activeAnnouncement = nil
+    static func volume(activeClipCount: Int) -> Float {
+        activeClipCount == 0 ? primaryVolume : overlappingVolume
     }
 }
 
+private struct ActiveSpeech {
+    let synthesizer: AVSpeechSynthesizer
+    let utteranceID: ObjectIdentifier
+}
+
+/// One synthesizer is used per active announcement. This permits a time
+/// announcement and a rep announcement to really play at the same time.
+/// Nothing is queued and an active clip is never interrupted by a later clip.
 @MainActor
 final class SpeechCoordinator: NSObject, AVSpeechSynthesizerDelegate {
-    private let synthesizer = AVSpeechSynthesizer()
-    private var arbiter = SpeechAnnouncementArbiter()
+    private var active: [UUID: ActiveSpeech] = [:]
     private var utteranceTokens: [ObjectIdentifier: UUID] = [:]
 
-    override init() {
-        super.init()
-        synthesizer.delegate = self
+    @discardableResult
+    func speakPriority(_ text: String) -> Bool {
+        speak(text)
     }
 
-    /// Priority announcements (countdown and time) replace anything currently
-    /// speaking and discard every queued count announcement.
-    func speakPriority(_ text: String) {
-        _ = synthesizer.stopSpeaking(at: .immediate)
-
-        let token = UUID()
-        let utterance = makeUtterance(text)
-        arbiter.beginPriority(token: token)
-        utteranceTokens[ObjectIdentifier(utterance)] = token
-        synthesizer.speak(utterance)
-    }
-
-    /// Count announcements are intentionally never queued. If another count or
-    /// a priority announcement is in progress, this count is considered stale.
     @discardableResult
     func speakCount(_ text: String) -> Bool {
-        guard !synthesizer.isSpeaking, !synthesizer.isPaused else { return false }
+        speak(text)
+    }
 
+    func stop() {
+        let synthesizers = active.values.map(\.synthesizer)
+        active.removeAll()
+        utteranceTokens.removeAll()
+        synthesizers.forEach { $0.stopSpeaking(at: .immediate) }
+    }
+
+    @discardableResult
+    private func speak(_ text: String) -> Bool {
         let token = UUID()
-        guard arbiter.beginCount(token: token) else { return false }
+        let volume = SpeechMixPolicy.volume(activeClipCount: active.count)
+        let utterance = makeUtterance(text, volume: volume)
+        let synthesizer = AVSpeechSynthesizer()
+        synthesizer.delegate = self
 
-        let utterance = makeUtterance(text)
-        utteranceTokens[ObjectIdentifier(utterance)] = token
+        let identifier = ObjectIdentifier(utterance)
+        active[token] = ActiveSpeech(synthesizer: synthesizer, utteranceID: identifier)
+        utteranceTokens[identifier] = token
         synthesizer.speak(utterance)
         return true
     }
 
-    func stop() {
-        arbiter.reset()
-        utteranceTokens.removeAll()
-        synthesizer.stopSpeaking(at: .immediate)
-    }
-
-    private func makeUtterance(_ text: String) -> AVSpeechUtterance {
+    private func makeUtterance(_ text: String, volume: Float) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
         utterance.rate = 0.48
-        utterance.volume = 1
+        utterance.volume = volume
         return utterance
     }
 
     private func finishUtterance(with identifier: ObjectIdentifier) {
-        guard let token = utteranceTokens.removeValue(forKey: identifier) else { return }
-        arbiter.finish(token: token)
+        guard let token = utteranceTokens.removeValue(forKey: identifier),
+              active[token]?.utteranceID == identifier else { return }
+        active.removeValue(forKey: token)
     }
 
     nonisolated func speechSynthesizer(

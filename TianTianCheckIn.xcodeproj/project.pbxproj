@@ -26,6 +26,8 @@
 		B11800000000000000000018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A11800000000000000000018 /* PrivacyInfo.xcprivacy */; };
 		B11900000000000000000019 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A11900000000000000000019 /* LaunchScreen.storyboard */; };
 		B12000000000000000000020 /* PoseRecognition.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12000000000000000000020 /* PoseRecognition.swift */; };
+		B12100000000000000000021 /* WorkoutHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000021 /* WorkoutHistory.swift */; };
+		B12200000000000000000022 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12200000000000000000022 /* HistoryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +62,8 @@
 		A11800000000000000000018 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = TianTianCheckIn/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
 		A11900000000000000000019 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = TianTianCheckIn/LaunchScreen.storyboard; sourceTree = SOURCE_ROOT; };
 		A12000000000000000000020 /* PoseRecognition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/PoseRecognition.swift; sourceTree = SOURCE_ROOT; };
+		A12100000000000000000021 /* WorkoutHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Models/WorkoutHistory.swift; sourceTree = SOURCE_ROOT; };
+		A12200000000000000000022 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Views/HistoryView.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,6 +122,7 @@
 				A10200000000000000000002 /* WorkoutConfig.swift */,
 				A10300000000000000000003 /* WorkoutEvent.swift */,
 				A10400000000000000000004 /* ConfigStore.swift */,
+				A12100000000000000000021 /* WorkoutHistory.swift */,
 			);
 			name = Models;
 			sourceTree = "<group>";
@@ -143,6 +148,7 @@
 				A11200000000000000000012 /* CameraPreview.swift */,
 				A11300000000000000000013 /* WorkoutView.swift */,
 				A11400000000000000000014 /* ResultView.swift */,
+				A12200000000000000000022 /* HistoryView.swift */,
 			);
 			name = Views;
 			sourceTree = "<group>";
@@ -267,11 +273,13 @@
 				B10800000000000000000008 /* VideoComposer.swift in Sources */,
 				B10900000000000000000009 /* WorkoutSessionController.swift in Sources */,
 				B12000000000000000000020 /* PoseRecognition.swift in Sources */,
+				B12100000000000000000021 /* WorkoutHistory.swift in Sources */,
 				B11000000000000000000010 /* RootView.swift in Sources */,
 				B11100000000000000000011 /* SetupView.swift in Sources */,
 				B11200000000000000000012 /* CameraPreview.swift in Sources */,
 				B11300000000000000000013 /* WorkoutView.swift in Sources */,
 				B11400000000000000000014 /* ResultView.swift in Sources */,
+				B12200000000000000000022 /* HistoryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

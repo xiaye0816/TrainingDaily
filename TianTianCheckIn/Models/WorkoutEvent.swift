@@ -1,17 +1,42 @@
 import Foundation
 
-enum WorkoutEndReason: String, Sendable {
+enum WorkoutEndReason: String, Codable, Sendable {
     case timerFinished
     case manual
     case interrupted
 }
 
-enum WorkoutEventKind: Equatable, Sendable {
+enum WorkoutEventKind: Equatable, Codable, Sendable {
     case countChanged(Int)
     case announcement(String)
+
+    private enum CodingKeys: String, CodingKey { case type, count, text }
+    private enum Kind: String, Codable { case countChanged, announcement }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .type) {
+        case .countChanged:
+            self = .countChanged(try container.decode(Int.self, forKey: .count))
+        case .announcement:
+            self = .announcement(try container.decode(String.self, forKey: .text))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .countChanged(count):
+            try container.encode(Kind.countChanged, forKey: .type)
+            try container.encode(count, forKey: .count)
+        case let .announcement(text):
+            try container.encode(Kind.announcement, forKey: .type)
+            try container.encode(text, forKey: .text)
+        }
+    }
 }
 
-struct WorkoutEvent: Equatable, Sendable {
+struct WorkoutEvent: Equatable, Codable, Sendable {
     let offset: TimeInterval
     let kind: WorkoutEventKind
 }

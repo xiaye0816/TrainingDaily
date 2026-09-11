@@ -2,12 +2,15 @@ import SwiftUI
 
 struct WorkoutView: View {
     @EnvironmentObject private var session: WorkoutSessionController
+    @State private var pinchStartFactor: CGFloat?
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 previewBackground
+                    .ignoresSafeArea()
                 Color.black.opacity(session.currentConfig.recordingEnabled ? 0.08 : 0.72)
+                    .ignoresSafeArea()
 
                 switch session.phase {
                 case .preparingCamera:
@@ -24,7 +27,18 @@ struct WorkoutView: View {
                     EmptyView()
                 }
             }
-            .ignoresSafeArea()
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .onChanged { value in
+                        guard session.phase == .framing else { return }
+                        if pinchStartFactor == nil {
+                            pinchStartFactor = session.selectedZoomFactor
+                        }
+                        session.setPinchZoom((pinchStartFactor ?? 1) * value.magnification)
+                    }
+                    .onEnded { _ in pinchStartFactor = nil },
+                isEnabled: session.phase == .framing && session.currentConfig.recordingEnabled
+            )
         }
         .background(.black)
         .statusBarHidden(session.phase == .active || session.phase == .countdown(1) || session.phase == .countdown(2) || session.phase == .countdown(3))
@@ -73,7 +87,29 @@ struct WorkoutView: View {
                 }
             }
             .padding(.horizontal, 18)
-            .padding(.top, 14)
+            .padding(.top, 8)
+
+            if session.zoomOptions.count > 1 {
+                HStack(spacing: 8) {
+                    ForEach(session.zoomOptions) { option in
+                        Button(option.label) {
+                            session.selectZoom(option)
+                        }
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 48, minHeight: 42)
+                        .background(
+                            abs(session.selectedZoomFactor - option.deviceFactor) < 0.02
+                                ? Color.workoutGreen.opacity(0.92)
+                                : Color.black.opacity(0.55)
+                        )
+                        .clipShape(Capsule())
+                        .contentShape(Capsule())
+                        .accessibilityLabel("镜头倍率\(option.label)")
+                    }
+                }
+                .padding(.top, 4)
+            }
 
             Spacer(minLength: 12)
 
@@ -113,8 +149,8 @@ struct WorkoutView: View {
 
     private func framingGuide(isLandscape: Bool) -> some View {
         let isJumpRope = session.currentConfig.exerciseType == .jumpRope
-        let width: CGFloat = isJumpRope ? (isLandscape ? 125 : 190) : (isLandscape ? 300 : 310)
-        let height: CGFloat = isJumpRope ? (isLandscape ? 190 : 310) : (isLandscape ? 145 : 160)
+        let width: CGFloat = isJumpRope ? (isLandscape ? 190 : 280) : (isLandscape ? 440 : 350)
+        let height: CGFloat = isJumpRope ? (isLandscape ? 280 : 440) : (isLandscape ? 210 : 210)
 
         return ZStack {
             RoundedRectangle(cornerRadius: isJumpRope ? 70 : 45, style: .continuous)
@@ -280,6 +316,7 @@ private struct GlassButtonStyle: ButtonStyle {
             .foregroundStyle(.white.opacity(configuration.isPressed ? 0.65 : 1))
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .frame(minHeight: 48)
             .background(.black.opacity(0.55))
             .clipShape(Capsule())
     }

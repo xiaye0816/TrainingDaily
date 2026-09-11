@@ -7,6 +7,13 @@ struct RecordingStart: Sendable {
     let uptime: TimeInterval
 }
 
+struct CameraZoomOption: Identifiable, Equatable, Sendable {
+    let label: String
+    let deviceFactor: CGFloat
+
+    var id: String { label }
+}
+
 enum CameraRecorderError: LocalizedError {
     case cameraPermissionDenied
     case microphonePermissionDenied
@@ -110,6 +117,9 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
                 }
                 self.stopContinuation = continuation
                 self.movieOutput.stopRecording()
+                if self.session.isRunning {
+                    self.session.stopRunning()
+                }
             }
         }
     }
@@ -119,7 +129,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
             sessionQueue.async { [weak self] in
                 guard let self, let currentInput = self.videoInput else { return }
                 let target: AVCaptureDevice.Position = currentInput.device.position == .back ? .front : .back
-                guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: target) else {
+                guard let device = Self.preferredCamera(position: target) else {
                     continuation.resume(throwing: CameraRecorderError.cameraUnavailable)
                     return
                 }
@@ -131,6 +141,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
                         self.session.addInput(replacement)
                         self.videoInput = replacement
                         self.configureDevice(device)
+                        self.applyDefaultOneTimesZoom(to: device)
                         self.configureVideoConnections()
                         self.poseAnalyzer?.resetForCameraChange()
                         self.session.commitConfiguration()
@@ -143,6 +154,34 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
                 } catch {
                     continuation.resume(throwing: error)
                 }
+            }
+        }
+    }
+
+    func availableZoomOptions() async -> [CameraZoomOption] {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async { [weak self] in
+                continuation.resume(returning: self?.resolvedZoomOptions() ?? [])
+            }
+        }
+    }
+
+    func setZoomFactor(_ factor: CGFloat) async {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async { [weak self] in
+                guard let device = self?.videoInput?.device else {
+                    continuation.resume()
+                    return
+                }
+                do {
+                    try device.lockForConfiguration()
+                    let resolved = min(max(factor, device.minAvailableVideoZoomFactor), device.maxAvailableVideoZoomFactor)
+                    device.videoZoomFactor = resolved
+                    device.unlockForConfiguration()
+                } catch {
+                    // Keep the previous zoom if the camera is being reconfigured.
+                }
+                continuation.resume()
             }
         }
     }
@@ -188,13 +227,13 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
             session.removeOutput(analysisOutput)
         }
 
-        if session.canSetSessionPreset(.hd1920x1080) {
-            session.sessionPreset = .hd1920x1080
+        if session.canSetSessionPreset(.hd1280x720) {
+            session.sessionPreset = .hd1280x720
         } else {
             session.sessionPreset = .high
         }
 
-        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+        guard let camera = Self.preferredCamera(position: .back) else {
             throw CameraRecorderError.cameraUnavailable
         }
         let cameraInput = try AVCaptureDeviceInput(device: camera)
@@ -202,6 +241,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         session.addInput(cameraInput)
         videoInput = cameraInput
         configureDevice(camera)
+        applyDefaultOneTimesZoom(to: camera)
 
         if includeAudio {
             guard let microphone = AVCaptureDevice.default(for: .audio) else {
@@ -251,6 +291,55 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
             }
         } catch {
             // Keep the device defaults when a format can't be locked.
+        }
+    }
+
+    private static func preferredCamera(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        let deviceTypes: [AVCaptureDevice.DeviceType]
+        if position == .back {
+            deviceTypes = [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
+        } else {
+            deviceTypes = [.builtInTrueDepthCamera, .builtInWideAngleCamera]
+        }
+        for type in deviceTypes {
+            if let device = AVCaptureDevice.default(type, for: .video, position: position) {
+                return device
+            }
+        }
+        return nil
+    }
+
+    private func applyDefaultOneTimesZoom(to device: AVCaptureDevice) {
+        guard let oneTimes = resolvedZoomOptions().first(where: { $0.label == "1×" }) else { return }
+        do {
+            try device.lockForConfiguration()
+            device.videoZoomFactor = min(max(oneTimes.deviceFactor, device.minAvailableVideoZoomFactor), device.maxAvailableVideoZoomFactor)
+            device.unlockForConfiguration()
+        } catch {
+            // The default hardware factor remains usable.
+        }
+    }
+
+    private func resolvedZoomOptions() -> [CameraZoomOption] {
+        guard let device = videoInput?.device else { return [] }
+        let minimum = device.minAvailableVideoZoomFactor
+        let maximum = device.maxAvailableVideoZoomFactor
+        let switchFactors = device.virtualDeviceSwitchOverVideoZoomFactors.map(\.doubleValue)
+        let hasUltraWide = device.position == .back
+            && (device.deviceType == .builtInTripleCamera || device.deviceType == .builtInDualWideCamera)
+        let oneTimesFactor: CGFloat = hasUltraWide ? CGFloat(switchFactors.first ?? 2) : max(1, minimum)
+
+        var candidates: [CameraZoomOption] = []
+        if hasUltraWide, minimum <= oneTimesFactor * 0.55 {
+            candidates.append(CameraZoomOption(label: "0.5×", deviceFactor: minimum))
+        }
+        candidates.append(CameraZoomOption(label: "1×", deviceFactor: min(oneTimesFactor, maximum)))
+        if maximum >= oneTimesFactor * 1.8 {
+            candidates.append(CameraZoomOption(label: "2×", deviceFactor: min(oneTimesFactor * 2, maximum)))
+        }
+        return candidates.reduce(into: []) { result, candidate in
+            guard !result.contains(where: { abs($0.deviceFactor - candidate.deviceFactor) < 0.01 }) else { return }
+            result.append(candidate)
         }
     }
 

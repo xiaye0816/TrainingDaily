@@ -110,13 +110,13 @@ enum VideoComposer {
 
         guard let exporter = AVAssetExportSession(
             asset: composition,
-            presetName: AVAssetExportPresetHighestQuality
+            presetName: AVAssetExportPreset1280x720
         ) else {
             throw VideoComposerError.cannotCreateExporter
         }
         exporter.outputURL = outputURL
         exporter.outputFileType = .mov
-        exporter.shouldOptimizeForNetworkUse = false
+        exporter.shouldOptimizeForNetworkUse = true
         exporter.videoComposition = videoComposition
 
         try await export(exporter)
