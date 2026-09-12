@@ -158,8 +158,8 @@ struct WorkoutView: View {
 
     private func framingGuide(isLandscape: Bool) -> some View {
         let isJumpRope = session.currentConfig.exerciseType == .jumpRope
-        let width: CGFloat = isJumpRope ? (isLandscape ? 190 : 280) : (isLandscape ? 440 : 350)
-        let height: CGFloat = isJumpRope ? (isLandscape ? 280 : 440) : (isLandscape ? 210 : 210)
+        let width: CGFloat = isJumpRope ? (isLandscape ? 210 : 310) : (isLandscape ? 480 : 360)
+        let height: CGFloat = isJumpRope ? (isLandscape ? 300 : 480) : (isLandscape ? 240 : 250)
 
         return ZStack {
             RoundedRectangle(cornerRadius: isJumpRope ? 70 : 45, style: .continuous)

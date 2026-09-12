@@ -98,7 +98,7 @@ enum PoseTrackingStatus: Equatable, Sendable {
         case .inactive: "自动识别未启用"
         case .findingPerson: "请进入取景框"
         case .multiplePeople: "画面中请只保留一名训练者"
-        case .showFullBody: "请确保全身和四肢完整入镜"
+        case .showFullBody: "请让训练者主体清晰入镜"
         case .showHead: "请露出头顶，并在上方留一点空间"
         case .showFeet: "请露出双脚，并在脚下留一点空间"
         case .moveCloser: "请靠近一些"
@@ -106,7 +106,7 @@ enum PoseTrackingStatus: Equatable, Sendable {
         case .turnSideways: "请将身体侧面对准手机"
         case .faceCamera: "请正面对准手机"
         case .holdPosition: "位置合适，请保持"
-        case .ready: "取景合格，可以开始"
+        case .ready: "已识别主体，可以开始"
         case .tracking: "自动识别中"
         case .lost: "人物离开画面，计次已暂停"
         case .performanceFallback: "识别速度不足，已切换手动计次"
@@ -124,34 +124,20 @@ struct RepDetection: Equatable, Sendable {
 
 enum PoseQualityEvaluator {
     static func adjustment(for sample: BodyPoseSample, exercise: ExerciseType) -> PoseTrackingStatus? {
-        if sample.personCount > 1 { return .multiplePeople }
         guard let bounds = sample.bounds else { return .findingPerson }
 
         switch exercise {
         case .sitUp:
             guard bestSide(in: sample) != nil else { return .showFullBody }
-            if bounds.minX < 0.015 || bounds.minY < 0.015 || bounds.maxX > 0.985 || bounds.maxY > 0.985 {
-                return .moveFarther
-            }
-            if max(bounds.width, bounds.height) < 0.30 { return .moveCloser }
-            if max(bounds.width, bounds.height) > 0.97 { return .moveFarther }
-            if appearsFrontFacing(sample) { return .turnSideways }
+            if max(bounds.width, bounds.height) < 0.18 { return .moveCloser }
         case .jumpRope:
-            if sample.point(.nose) == nil { return .showHead }
             if sample.point(.leftAnkle) == nil || sample.point(.rightAnkle) == nil { return .showFeet }
             let required: [BodyJoint] = [
-                .nose, .leftShoulder, .rightShoulder,
-                .leftHip, .rightHip, .leftKnee, .rightKnee, .leftAnkle, .rightAnkle
+                .leftShoulder, .rightShoulder,
+                .leftHip, .rightHip, .leftAnkle, .rightAnkle
             ]
             guard required.allSatisfy({ sample.point($0) != nil }) else { return .showFullBody }
-            guard let nose = sample.point(.nose),
-                  let leftAnkle = sample.point(.leftAnkle),
-                  let rightAnkle = sample.point(.rightAnkle) else { return .showFullBody }
-            if nose.y > 0.975 { return .showHead }
-            if min(leftAnkle.y, rightAnkle.y) < 0.025 { return .showFeet }
-            if bounds.height < 0.38 { return .moveCloser }
-            if bounds.height > 0.97 { return .moveFarther }
-            if !appearsFrontFacing(sample) { return .faceCamera }
+            if bounds.height < 0.20 { return .moveCloser }
         }
         return nil
     }
@@ -186,14 +172,58 @@ enum PoseQualityEvaluator {
         return (shoulderPoint, hipPoint, kneePoint, anklePoint)
     }
 
-    private static func appearsFrontFacing(_ sample: BodyPoseSample) -> Bool {
-        guard let leftShoulder = sample.point(.leftShoulder),
-              let rightShoulder = sample.point(.rightShoulder),
-              let leftHip = sample.point(.leftHip),
-              let rightHip = sample.point(.rightHip),
-              let bounds = sample.bounds else { return false }
-        let lateralSpread = (abs(leftShoulder.x - rightShoulder.x) + abs(leftHip.x - rightHip.x)) / 2
-        return lateralSpread / max(bounds.height, 0.1) >= 0.12
+}
+
+struct PrimaryPoseSubjectTracker {
+    private var trackedBounds: PoseBounds?
+    private var lastSeenUptime: TimeInterval?
+
+    mutating func reset() {
+        trackedBounds = nil
+        lastSeenUptime = nil
+    }
+
+    mutating func select(from samples: [BodyPoseSample], at captureUptime: TimeInterval) -> BodyPoseSample? {
+        guard !samples.isEmpty else { return nil }
+
+        let selected: BodyPoseSample?
+        if let trackedBounds,
+           let lastSeenUptime,
+           captureUptime - lastSeenUptime <= 0.75 {
+            selected = samples
+                .map { ($0, trackingScore(candidate: $0.bounds, target: trackedBounds)) }
+                .filter { $0.1 >= 0.35 }
+                .max(by: { $0.1 < $1.1 })?.0
+        } else {
+            selected = samples.max(by: { initialScore($0) < initialScore($1) })
+        }
+
+        guard let selected, let bounds = selected.bounds else { return nil }
+        trackedBounds = bounds
+        lastSeenUptime = captureUptime
+        return selected
+    }
+
+    private func initialScore(_ sample: BodyPoseSample) -> Double {
+        guard let bounds = sample.bounds else { return 0 }
+        let distanceFromCenter = hypot(bounds.centerX - 0.5, bounds.centerY - 0.5)
+        return bounds.area * max(0.2, 1.2 - distanceFromCenter)
+    }
+
+    private func trackingScore(candidate: PoseBounds?, target: PoseBounds) -> Double {
+        guard let candidate else { return 0 }
+        let distance = hypot(candidate.centerX - target.centerX, candidate.centerY - target.centerY)
+        let proximity = max(0, 1 - distance / 0.45)
+        let largestArea = max(candidate.area, target.area, 0.0001)
+        let areaSimilarity = min(candidate.area, target.area) / largestArea
+        return intersectionOverUnion(candidate, target) * 0.35 + proximity * 0.5 + areaSimilarity * 0.15
+    }
+
+    private func intersectionOverUnion(_ first: PoseBounds, _ second: PoseBounds) -> Double {
+        let width = max(0, min(first.maxX, second.maxX) - max(first.minX, second.minX))
+        let height = max(0, min(first.maxY, second.maxY) - max(first.minY, second.minY))
+        let intersection = width * height
+        return intersection / max(first.area + second.area - intersection, 0.0001)
     }
 }
 
@@ -449,7 +479,8 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     private var statusHandler: StatusHandler?
     private var detectionHandler: DetectionHandler?
     private var lastStatus = PoseTrackingStatus.inactive
-    private var framingSamples: [(time: TimeInterval, isValid: Bool)] = []
+    private var framingHasUsableSubject = false
+    private var subjectTracker = PrimaryPoseSubjectTracker()
     private var lastAnalyzedUptime = -Double.infinity
     private var lastValidPoseUptime: TimeInterval?
     private var processedFrameTimes: [TimeInterval] = []
@@ -531,7 +562,8 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
 
     private func resetAnalysisState() {
         request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
-        framingSamples = []
+        framingHasUsableSubject = false
+        subjectTracker.reset()
         lastAnalyzedUptime = -Double.infinity
         lastValidPoseUptime = nil
         processedFrameTimes = []
@@ -576,30 +608,25 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
 
     private func handleObservations(_ observations: [VNHumanBodyPoseObservation], captureUptime: TimeInterval) {
         let samples = observations.compactMap { makeSample(from: $0, captureUptime: captureUptime, personCount: observations.count) }
-        guard var selected = samples.max(by: { score($0) < score($1) }) else {
-            handleMissingPose(at: captureUptime)
-            return
-        }
-        let significantPeople = samples.filter { ($0.bounds?.area ?? 0) >= (selected.bounds?.area ?? 0) * 0.35 }.count
-        selected = BodyPoseSample(captureUptime: selected.captureUptime, points: selected.points, personCount: significantPeople)
-        let adjustment = PoseQualityEvaluator.adjustment(for: selected, exercise: exercise)
+        let usableSamples = samples.filter { PoseQualityEvaluator.adjustment(for: $0, exercise: exercise) == nil }
 
         switch mode {
         case .framing:
             request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
-            recordFramingSample(isValid: adjustment == nil, at: captureUptime)
-            if framingIsReady(at: captureUptime) {
+            if subjectTracker.select(from: usableSamples, at: captureUptime) != nil {
+                framingHasUsableSubject = true
+            }
+            if framingHasUsableSubject {
                 emit(.ready)
-            } else if adjustment == nil {
-                emit(.holdPosition)
             } else {
-                emit(adjustment ?? .findingPerson)
+                let guidanceCandidate = samples.max(by: { ($0.bounds?.area ?? 0) < ($1.bounds?.area ?? 0) })
+                emit(guidanceCandidate.flatMap { PoseQualityEvaluator.adjustment(for: $0, exercise: exercise) } ?? .findingPerson)
             }
         case let .counting(activeStartUptime):
             recordProcessedFrame(at: captureUptime)
             guard case .counting = mode else { return }
             guard captureUptime >= activeStartUptime else { return }
-            guard adjustment == nil else {
+            guard let selected = subjectTracker.select(from: usableSamples, at: captureUptime) else {
                 handleMissingPose(at: captureUptime)
                 return
             }
@@ -617,8 +644,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     private func handleMissingPose(at captureUptime: TimeInterval) {
         switch mode {
         case .framing:
-            recordFramingSample(isValid: false, at: captureUptime)
-            emit(framingIsReady(at: captureUptime) ? .ready : .findingPerson)
+            emit(framingHasUsableSubject ? .ready : .findingPerson)
         case .counting:
             recordProcessedFrame(at: captureUptime)
             emit(.lost)
@@ -634,19 +660,6 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         }
     }
 
-    private func recordFramingSample(isValid: Bool, at captureUptime: TimeInterval) {
-        framingSamples.append((captureUptime, isValid))
-        framingSamples.removeAll { captureUptime - $0.time > 1.2 }
-    }
-
-    private func framingIsReady(at captureUptime: TimeInterval) -> Bool {
-        guard let first = framingSamples.first,
-              captureUptime - first.time >= 0.8,
-              framingSamples.count >= 8 else { return false }
-        let validCount = framingSamples.reduce(0) { $0 + ($1.isValid ? 1 : 0) }
-        return Double(validCount) / Double(framingSamples.count) >= 0.75
-    }
-
     private func recordProcessedFrame(at captureUptime: TimeInterval) {
         processedFrameTimes.append(captureUptime)
         processedFrameTimes.removeAll { captureUptime - $0 > 2 }
@@ -657,12 +670,6 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             mode = .inactive
             emit(.performanceFallback)
         }
-    }
-
-    private func score(_ sample: BodyPoseSample) -> Double {
-        guard let bounds = sample.bounds else { return 0 }
-        let distanceFromCenter = hypot(bounds.centerX - 0.5, bounds.centerY - 0.5)
-        return bounds.area * max(0.2, 1.2 - distanceFromCenter)
     }
 
     private func makeSample(

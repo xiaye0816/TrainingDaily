@@ -394,12 +394,27 @@ final class WorkoutConfigTests: XCTestCase {
         }
     }
 
-    func testPoseQualityRejectsMultiplePeopleAndAcceptsGuidedJumpRopeFrame() {
+    func testPoseQualityAllowsOtherPeopleAndAcceptsGuidedJumpRopeFrame() {
         var sample = jumpRopeSample(uptime: 0, lift: 0)
         XCTAssertNil(PoseQualityEvaluator.adjustment(for: sample, exercise: .jumpRope))
 
         sample = BodyPoseSample(captureUptime: 0, points: sample.points, personCount: 2)
-        XCTAssertEqual(PoseQualityEvaluator.adjustment(for: sample, exercise: .jumpRope), .multiplePeople)
+        XCTAssertNil(PoseQualityEvaluator.adjustment(for: sample, exercise: .jumpRope))
+    }
+
+    func testPrimarySubjectTrackerKeepsTheOriginalPersonWhenAnotherPersonAppears() {
+        var tracker = PrimaryPoseSubjectTracker()
+        let primary = sitUpSample(uptime: 0, isUp: false)
+        let background = shifted(primary, x: 0.38, scale: 0.55, uptime: 0)
+        XCTAssertEqual(tracker.select(from: [background, primary], at: 0)?.bounds, primary.bounds)
+
+        let movedPrimary = shifted(primary, x: 0.03, scale: 1, uptime: 0.1)
+        let largerBystander = shifted(primary, x: 0.42, scale: 1.15, uptime: 0.1)
+        XCTAssertEqual(tracker.select(from: [largerBystander, movedPrimary], at: 0.1)?.bounds, movedPrimary.bounds)
+    }
+
+    func testSitUpPoseQualityNeedsOnlyOneUsableSide() {
+        XCTAssertNil(PoseQualityEvaluator.adjustment(for: sitUpSample(uptime: 0, isUp: false), exercise: .sitUp))
     }
 
     func testJumpRopeFramingDoesNotRequireWrists() {
@@ -454,6 +469,17 @@ final class WorkoutConfigTests: XCTestCase {
             ],
             personCount: 1
         )
+    }
+
+    private func shifted(_ sample: BodyPoseSample, x: Double, scale: Double, uptime: TimeInterval) -> BodyPoseSample {
+        let points = sample.points.mapValues { point in
+            PosePoint(
+                x: 0.5 + (point.x - 0.5) * scale + x,
+                y: 0.5 + (point.y - 0.5) * scale,
+                confidence: point.confidence
+            )
+        }
+        return BodyPoseSample(captureUptime: uptime, points: points, personCount: sample.personCount)
     }
 
     private func point(_ x: Double, _ y: Double, confidence: Double = 0.95) -> PosePoint {

@@ -22,8 +22,8 @@ enum ExerciseType: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var framingInstruction: String {
         switch self {
-        case .sitUp: "请将手机放在身体侧面，确保肩、髋、膝和脚踝完整入镜"
-        case .jumpRope: "请正对手机站立，确保头顶、双手、双脚和绳子活动空间完整入镜"
+        case .sitUp: "请将手机放在身体侧面，让训练者主体清晰入镜"
+        case .jumpRope: "请正对手机站立，让训练者主体清晰入镜"
         }
     }
 }
