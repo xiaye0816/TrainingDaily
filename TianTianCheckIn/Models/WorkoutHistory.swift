@@ -46,7 +46,15 @@ final class WorkoutHistoryStore: ObservableObject {
         try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         load()
         removeExpiredVideos(now: Date())
-        let interruptedIDs = records.filter { $0.videoState == .processing }.map(\.id)
+        let interruptedRealtimeIDs = records.filter {
+            $0.videoState == .processing && $0.sourceVideoFilename == nil
+        }.map(\.id)
+        for id in interruptedRealtimeIDs {
+            markFailed(id, message: "App 在生成视频时被中断，成绩已保留。")
+        }
+        let interruptedIDs = records.filter {
+            $0.videoState == .processing && $0.sourceVideoFilename != nil
+        }.map(\.id)
         Task { [weak self] in
             guard let self else { return }
             for id in interruptedIDs { await self.processVideo(id) }
@@ -125,6 +133,48 @@ final class WorkoutHistoryStore: ObservableObject {
         records.insert(record, at: 0)
         persist()
         return record
+    }
+
+    /// Saves the result immediately, before the camera writer has finished.
+    /// Completion updates this same record so a crash can never lose the score.
+    func beginRealtimeVideoFinalization(
+        startedAt: Date,
+        duration: TimeInterval,
+        count: Int,
+        reason: WorkoutEndReason,
+        config: WorkoutConfig
+    ) -> WorkoutRecord {
+        let record = WorkoutRecord(
+            id: UUID(), startedAt: startedAt, exercise: config.exerciseType,
+            duration: duration, recordedDuration: duration, recordingPipelineVersion: 3,
+            count: count, endReason: reason,
+            videoState: .processing, videoFilename: nil, sourceVideoFilename: nil,
+            processingConfig: nil, processingEvents: nil,
+            errorMessage: nil, savedToPhotos: false
+        )
+        records.insert(record, at: 0)
+        persist()
+        return record
+    }
+
+    func completeRealtimeVideo(_ id: UUID, videoURL: URL) throws -> WorkoutRecord {
+        let filename = "workout-\(id.uuidString).mov"
+        let destination = directoryURL.appendingPathComponent(filename)
+        try? fileManager.removeItem(at: destination)
+        try fileManager.moveItem(at: videoURL, to: destination)
+        update(id) {
+            $0.videoState = .ready
+            $0.videoFilename = filename
+            $0.errorMessage = nil
+        }
+        guard let record = records.first(where: { $0.id == id }) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return record
+    }
+
+    func failRealtimeVideo(_ id: UUID, message: String) {
+        markFailed(id, message: message)
     }
 
     func addWithoutVideo(

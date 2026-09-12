@@ -3,6 +3,8 @@ import SwiftUI
 struct SetupView: View {
     @Binding var config: WorkoutConfig
     let onStart: () -> Void
+    @State private var showsDiagnosticDeleteConfirmation = false
+    @State private var diagnosticMessage: String?
 
     private let durationOptions = [30, 60, 90, 120, 300]
     private let timeIntervals = [5, 10, 15, 30, 60]
@@ -42,11 +44,31 @@ struct SetupView: View {
                         Button("恢复默认设置", role: .destructive) {
                             config = .default
                         }
+                        Button("删除全部识别诊断", role: .destructive) {
+                            showsDiagnosticDeleteConfirmation = true
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
                     .accessibilityLabel("更多设置")
                 }
+            }
+            .confirmationDialog("删除全部本地诊断数据？", isPresented: $showsDiagnosticDeleteConfirmation) {
+                Button("删除", role: .destructive) {
+                    WorkoutDiagnosticsRecorder.deleteAll()
+                    diagnosticMessage = "识别诊断数据已删除"
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("只会删除自动识别诊断，不会删除训练记录或相册视频。")
+            }
+            .alert("完成", isPresented: Binding(
+                get: { diagnosticMessage != nil },
+                set: { if !$0 { diagnosticMessage = nil } }
+            )) {
+                Button("好") { diagnosticMessage = nil }
+            } message: {
+                Text(diagnosticMessage ?? "")
             }
         }
     }
@@ -155,6 +177,12 @@ struct SetupView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("识别到人物后自动开始", isOn: $config.autoStartWhenPersonReady)
                     Text("主体清晰入镜后会自动播放 3、2、1，无需再点准备按钮。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("保存识别诊断", isOn: $config.diagnosticsEnabled)
+                    Text("仅保存在本机，包含现场视频、姿态关键点和识别日志；最多保留 3 次或 7 天，便于连电脑后定位漏计和误计。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

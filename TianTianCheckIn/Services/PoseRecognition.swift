@@ -123,6 +123,13 @@ struct RepDetection: Equatable, Sendable {
 }
 
 enum PoseQualityEvaluator {
+    struct Side: Sendable {
+        let shoulder: PosePoint
+        let hip: PosePoint
+        let knee: PosePoint
+        let ankle: PosePoint?
+    }
+
     static func adjustment(for sample: BodyPoseSample, exercise: ExerciseType) -> PoseTrackingStatus? {
         guard let bounds = sample.bounds else { return .findingPerson }
 
@@ -144,13 +151,13 @@ enum PoseQualityEvaluator {
 
     static func bestSide(
         in sample: BodyPoseSample
-    ) -> (shoulder: PosePoint, hip: PosePoint, knee: PosePoint, ankle: PosePoint)? {
+    ) -> Side? {
         let left = side(in: sample, shoulder: .leftShoulder, hip: .leftHip, knee: .leftKnee, ankle: .leftAnkle)
         let right = side(in: sample, shoulder: .rightShoulder, hip: .rightHip, knee: .rightKnee, ankle: .rightAnkle)
         switch (left, right) {
         case let (.some(left), .some(right)):
-            let leftConfidence = left.shoulder.confidence + left.hip.confidence + left.knee.confidence + left.ankle.confidence
-            let rightConfidence = right.shoulder.confidence + right.hip.confidence + right.knee.confidence + right.ankle.confidence
+            let leftConfidence = left.shoulder.confidence + left.hip.confidence + left.knee.confidence + (left.ankle?.confidence ?? 0)
+            let rightConfidence = right.shoulder.confidence + right.hip.confidence + right.knee.confidence + (right.ankle?.confidence ?? 0)
             return leftConfidence >= rightConfidence ? left : right
         case let (.some(left), .none): return left
         case let (.none, .some(right)): return right
@@ -164,12 +171,16 @@ enum PoseQualityEvaluator {
         hip: BodyJoint,
         knee: BodyJoint,
         ankle: BodyJoint
-    ) -> (shoulder: PosePoint, hip: PosePoint, knee: PosePoint, ankle: PosePoint)? {
+    ) -> Side? {
         guard let shoulderPoint = sample.point(shoulder),
               let hipPoint = sample.point(hip),
-              let kneePoint = sample.point(knee),
-              let anklePoint = sample.point(ankle) else { return nil }
-        return (shoulderPoint, hipPoint, kneePoint, anklePoint)
+              let kneePoint = sample.point(knee) else { return nil }
+        return Side(
+            shoulder: shoulderPoint,
+            hip: hipPoint,
+            knee: kneePoint,
+            ankle: sample.point(ankle)
+        )
     }
 
 }
@@ -245,6 +256,8 @@ struct SitUpRepCounter {
     private var phase = Phase.seekingDown
     private var stableSamples = 0
     private var lastRepUptime = -Double.infinity
+    private var downHip: PosePoint?
+    private var downBodyScale = 0.1
     private let thresholds: Thresholds
 
     init(thresholds: Thresholds = Thresholds()) {
@@ -255,19 +268,31 @@ struct SitUpRepCounter {
         guard let side = PoseQualityEvaluator.bestSide(in: sample) else {
             return nil
         }
-        let bodyScale = max(side.shoulder.distance(to: side.ankle), 0.08)
+        let bodyScale = max(side.shoulder.distance(to: side.hip) + side.hip.distance(to: side.knee), 0.08)
         let rawAngle = abs(atan2(side.shoulder.y - side.hip.y, side.shoulder.x - side.hip.x))
         let torsoAngle = min(rawAngle, abs(.pi - rawAngle)) * 180 / .pi
         let shoulderHeight = (side.shoulder.y - side.hip.y) / bodyScale
         let isDown = torsoAngle <= thresholds.downMaximumTorsoAngle
             && shoulderHeight <= thresholds.downMaximumShoulderHeight
-        let isUp = torsoAngle >= thresholds.upMinimumTorsoAngle
+        let hipDisplacement = downHip.map { side.hip.distance(to: $0) / max(downBodyScale, 0.08) } ?? 0
+        let bodyAlignedStanding: Bool = {
+            let first = CGVector(dx: side.shoulder.x - side.hip.x, dy: side.shoulder.y - side.hip.y)
+            let second = CGVector(dx: side.knee.x - side.hip.x, dy: side.knee.y - side.hip.y)
+            let lengths = hypot(first.dx, first.dy) * hypot(second.dx, second.dy)
+            guard lengths > 0.0001 else { return false }
+            let cosine = min(1, max(-1, (first.dx * second.dx + first.dy * second.dy) / lengths))
+            return acos(cosine) * 180 / .pi >= 155
+        }()
+        let isStanding = hipDisplacement > 0.42 || bodyAlignedStanding
+        let isUp = torsoAngle >= thresholds.upMinimumTorsoAngle && !isStanding
 
         switch phase {
         case .seekingDown, .waitingForDown:
             stableSamples = isDown ? stableSamples + 1 : 0
             if stableSamples >= thresholds.downStableSampleCount {
                 phase = .readyForUp
+                downHip = side.hip
+                downBodyScale = bodyScale
                 stableSamples = 0
             }
         case .readyForUp:
@@ -276,9 +301,10 @@ struct SitUpRepCounter {
             phase = .waitingForDown
             stableSamples = 0
             lastRepUptime = sample.captureUptime
-            let confidence = [side.shoulder, side.hip, side.knee, side.ankle]
+            let confidencePoints = [side.shoulder, side.hip, side.knee] + [side.ankle].compactMap { $0 }
+            let confidence = confidencePoints
                 .map(\.confidence)
-                .reduce(0, +) / 4
+                .reduce(0, +) / Double(confidencePoints.count)
             return RepDetection(captureUptime: sample.captureUptime, exercise: .sitUp, confidence: confidence)
         }
         return nil
@@ -287,6 +313,7 @@ struct SitUpRepCounter {
     mutating func resetCycle() {
         phase = .seekingDown
         stableSamples = 0
+        downHip = nil
     }
 }
 
@@ -474,6 +501,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     private var mode = Mode.inactive
     private var statusHandler: StatusHandler?
     private var detectionHandler: DetectionHandler?
+    private var diagnosticsRecorder: WorkoutDiagnosticsRecorder?
     private var lastStatus = PoseTrackingStatus.inactive
     private var framingHasUsableSubject = false
     private var subjectTracker = PrimaryPoseSubjectTracker()
@@ -506,6 +534,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
 
     func configure(
         exercise: ExerciseType,
+        diagnosticsRecorder: WorkoutDiagnosticsRecorder? = nil,
         statusHandler: @escaping StatusHandler,
         detectionHandler: @escaping DetectionHandler
     ) {
@@ -514,6 +543,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             counter = ExerciseCounter(exercise: exercise)
             self.statusHandler = statusHandler
             self.detectionHandler = detectionHandler
+            self.diagnosticsRecorder = diagnosticsRecorder
             mode = .framing
             resetAnalysisState()
             emit(.findingPerson)
@@ -563,6 +593,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             mode = .inactive
             statusHandler = nil
             detectionHandler = nil
+            diagnosticsRecorder = nil
             resetAnalysisState()
         }
     }
@@ -580,6 +611,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     private func emit(_ status: PoseTrackingStatus) {
         guard status != lastStatus else { return }
         lastStatus = status
+        diagnosticsRecorder?.recordEvent("pose_status", detail: status.message)
         statusHandler?(status)
     }
 
@@ -597,6 +629,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             let observations = request.results ?? []
             handleObservations(observations, captureUptime: captureUptime)
         } catch {
+            diagnosticsRecorder?.recordEvent("vision_error", detail: error.localizedDescription, uptime: captureUptime)
             handleMissingPose(at: captureUptime)
         }
     }
@@ -620,7 +653,9 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         switch mode {
         case .framing:
             request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
-            if subjectTracker.select(from: usableSamples, at: captureUptime) != nil {
+            let selected = subjectTracker.select(from: usableSamples, at: captureUptime)
+            diagnosticsRecorder?.recordPose(samples: samples, selected: selected)
+            if selected != nil {
                 framingHasUsableSubject = true
             }
             if framingHasUsableSubject {
@@ -634,13 +669,16 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             guard case .counting = mode else { return }
             guard captureUptime >= activeStartUptime else { return }
             guard let selected = subjectTracker.select(from: usableSamples, at: captureUptime) else {
+                diagnosticsRecorder?.recordPose(samples: samples, selected: nil)
                 handleMissingPose(at: captureUptime)
                 return
             }
+            diagnosticsRecorder?.recordPose(samples: samples, selected: selected)
             lastValidPoseUptime = captureUptime
             didResetForCurrentLoss = false
             emit(.tracking)
             if let detection = counter.process(selected) {
+                diagnosticsRecorder?.recordEvent("rep_detected", detail: "confidence=\(detection.confidence)", uptime: detection.captureUptime)
                 detectionHandler?(detection)
             }
         case .inactive:

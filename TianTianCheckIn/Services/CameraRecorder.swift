@@ -49,6 +49,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     private var videoInput: AVCaptureDeviceInput?
     private var configuredWithAudio = false
     private var poseAnalyzer: PoseRecognitionEngine?
+    private var diagnosticsRecorder: WorkoutDiagnosticsRecorder?
     private var currentOrientation = UIDeviceOrientation.portrait
     private var audioRouteObserver: NSObjectProtocol?
 
@@ -72,7 +73,11 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         }
     }
 
-    func prepare(includeAudio: Bool, poseAnalyzer: PoseRecognitionEngine? = nil) async throws {
+    func prepare(
+        includeAudio: Bool,
+        poseAnalyzer: PoseRecognitionEngine? = nil,
+        diagnosticsRecorder: WorkoutDiagnosticsRecorder? = nil
+    ) async throws {
         guard await Self.requestAccess(for: .video) else {
             throw CameraRecorderError.cameraPermissionDenied
         }
@@ -84,7 +89,11 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
             sessionQueue.async { [weak self] in
                 guard let self else { return }
                 do {
-                    try self.configure(includeAudio: includeAudio, poseAnalyzer: poseAnalyzer)
+                    try self.configure(
+                        includeAudio: includeAudio,
+                        poseAnalyzer: poseAnalyzer,
+                        diagnosticsRecorder: diagnosticsRecorder
+                    )
                     if !self.session.isRunning {
                         self.session.startRunning()
                     }
@@ -234,6 +243,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
                     return
                 }
                 poseAnalyzer = nil
+                diagnosticsRecorder = nil
                 if session.isRunning {
                     session.stopRunning()
                 }
@@ -252,10 +262,15 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         }
     }
 
-    private func configure(includeAudio: Bool, poseAnalyzer: PoseRecognitionEngine?) throws {
+    private func configure(
+        includeAudio: Bool,
+        poseAnalyzer: PoseRecognitionEngine?,
+        diagnosticsRecorder: WorkoutDiagnosticsRecorder?
+    ) throws {
         if !session.inputs.isEmpty,
            configuredWithAudio == includeAudio {
             self.poseAnalyzer = poseAnalyzer
+            self.diagnosticsRecorder = diagnosticsRecorder
             configureVideoConnections()
             try configureAudioSession(includeAudio: includeAudio)
             return
@@ -313,6 +328,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         }
         configuredWithAudio = includeAudio
         self.poseAnalyzer = poseAnalyzer
+        self.diagnosticsRecorder = diagnosticsRecorder
         configureVideoConnections()
 
         try configureAudioSession(includeAudio: includeAudio)
@@ -469,6 +485,7 @@ extension CameraRecorder: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptur
     ) {
         autoreleasepool {
             if output === videoOutput {
+                diagnosticsRecorder?.captureFrame(sampleBuffer)
                 poseAnalyzer?.submit(sampleBuffer)
                 recordingWriter.appendVideo(sampleBuffer)
             } else if output === audioOutput {

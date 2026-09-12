@@ -29,6 +29,7 @@
 		B12100000000000000000021 /* WorkoutHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000021 /* WorkoutHistory.swift */; };
 		B12200000000000000000022 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12200000000000000000022 /* HistoryView.swift */; };
 		B12300000000000000000023 /* RealtimeRecordingWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12300000000000000000023 /* RealtimeRecordingWriter.swift */; };
+		B12400000000000000000024 /* WorkoutDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12400000000000000000024 /* WorkoutDiagnostics.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,6 +67,7 @@
 		A12100000000000000000021 /* WorkoutHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Models/WorkoutHistory.swift; sourceTree = SOURCE_ROOT; };
 		A12200000000000000000022 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Views/HistoryView.swift; sourceTree = SOURCE_ROOT; };
 		A12300000000000000000023 /* RealtimeRecordingWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/RealtimeRecordingWriter.swift; sourceTree = SOURCE_ROOT; };
+		A12400000000000000000024 /* WorkoutDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TianTianCheckIn/Services/WorkoutDiagnostics.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,6 +141,7 @@
 				A10900000000000000000009 /* WorkoutSessionController.swift */,
 				A12000000000000000000020 /* PoseRecognition.swift */,
 				A12300000000000000000023 /* RealtimeRecordingWriter.swift */,
+				A12400000000000000000024 /* WorkoutDiagnostics.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -284,6 +287,7 @@
 				B11400000000000000000014 /* ResultView.swift in Sources */,
 				B12200000000000000000022 /* HistoryView.swift in Sources */,
 				B12300000000000000000023 /* RealtimeRecordingWriter.swift in Sources */,
+				B12400000000000000000024 /* WorkoutDiagnostics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -406,7 +410,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4TL62DTQQM;
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_PREVIEWS = YES;
@@ -441,7 +445,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4TL62DTQQM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;

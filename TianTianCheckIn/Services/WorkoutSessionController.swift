@@ -46,8 +46,10 @@ final class WorkoutSessionController: ObservableObject {
     private var isFinalizing = false
     private var workoutStartedAt = Date()
     private var photoSaveObservation: AnyCancellable?
+    private var diagnosticsRecorder: WorkoutDiagnosticsRecorder?
 
     init() {
+        WorkoutDiagnosticsRecorder.cleanup()
         photoSaveObservation = photoSave.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -72,6 +74,10 @@ final class WorkoutSessionController: ObservableObject {
     func prepare(config: WorkoutConfig) {
         resetSessionState()
         self.config = config.normalized
+        if self.config.countingMode == .automatic, self.config.diagnosticsEnabled {
+            diagnosticsRecorder = WorkoutDiagnosticsRecorder(config: self.config)
+            diagnosticsRecorder?.recordEvent("session_preparing")
+        }
         speech.preload(Self.announcementPrompts(for: self.config))
         workoutStartedAt = Date()
         remainingSeconds = self.config.durationSeconds
@@ -85,6 +91,7 @@ final class WorkoutSessionController: ObservableObject {
             analyzer = poseRecognition
             poseRecognition.configure(
                 exercise: self.config.exerciseType,
+                diagnosticsRecorder: diagnosticsRecorder,
                 statusHandler: { [weak self] status in
                     Task { @MainActor [weak self] in
                         guard let self, self.recognitionSessionID == recognitionSessionID else { return }
@@ -109,7 +116,8 @@ final class WorkoutSessionController: ObservableObject {
                 if self.config.recordingEnabled {
                     try await cameraRecorder.prepare(
                         includeAudio: self.config.microphoneEnabled,
-                        poseAnalyzer: analyzer
+                        poseAnalyzer: analyzer,
+                        diagnosticsRecorder: diagnosticsRecorder
                     )
                     await refreshZoomOptions()
                 }
@@ -127,6 +135,7 @@ final class WorkoutSessionController: ObservableObject {
         // Change phase synchronously so consecutive Vision callbacks cannot
         // enqueue more than one countdown before the task begins executing.
         phase = .countdown(3)
+        diagnosticsRecorder?.recordEvent("countdown_started")
 
         countdownTask = Task { [weak self] in
             guard let self else { return }
@@ -154,6 +163,7 @@ final class WorkoutSessionController: ObservableObject {
                 elapsedSeconds = 0
                 remainingSeconds = config.durationSeconds
                 phase = .active
+                diagnosticsRecorder?.recordEvent("workout_started", uptime: now)
                 updateRecordingOverlay()
                 if config.countingMode == .automatic {
                     isAutomaticCountingActive = true
@@ -186,6 +196,7 @@ final class WorkoutSessionController: ObservableObject {
         let safeOffset = max(max(0, offset), lastCountEventOffset)
         lastCountEventOffset = safeOffset
         count += 1
+        diagnosticsRecorder?.recordEvent("count_applied", detail: "count=\(count),offset=\(safeOffset)")
         events.append(WorkoutEvent(offset: safeOffset, kind: .countChanged(count)))
         updateRecordingOverlay()
         if provideHaptic {
@@ -206,6 +217,7 @@ final class WorkoutSessionController: ObservableObject {
         guard phase == .active || phase == .finishing, config.counterEnabled, count > 0 else { return }
         count -= 1
         let offset = max(currentOffset, lastCountEventOffset)
+        diagnosticsRecorder?.recordEvent("count_undone", detail: "count=\(count),offset=\(offset)")
         lastCountEventOffset = offset
         events.append(WorkoutEvent(offset: offset, kind: .countChanged(count)))
         updateRecordingOverlay()
@@ -227,6 +239,7 @@ final class WorkoutSessionController: ObservableObject {
         Task {
             do {
                 try await cameraRecorder.switchCamera()
+                diagnosticsRecorder?.recordEvent("camera_switched")
                 await refreshZoomOptions()
             } catch {
                 errorMessage = error.localizedDescription
@@ -237,6 +250,7 @@ final class WorkoutSessionController: ObservableObject {
     func selectZoom(_ option: CameraZoomOption) {
         guard phase == .framing else { return }
         selectedZoomFactor = option.deviceFactor
+        diagnosticsRecorder?.recordEvent("zoom_selected", detail: "factor=\(option.deviceFactor)")
         Task { await cameraRecorder.setZoomFactor(option.deviceFactor) }
         if config.countingMode == .automatic {
             poseRecognition.resetForCameraChange()
@@ -285,11 +299,13 @@ final class WorkoutSessionController: ObservableObject {
     }
 
     func retry() {
+        guard !isVideoProcessing else { return }
         cleanupTemporaryFiles(keepOutput: false)
         prepare(config: config)
     }
 
     func returnHome() {
+        guard !isVideoProcessing else { return }
         poseRecognition.stop()
         cleanupTemporaryFiles(keepOutput: false)
         resetSessionState()
@@ -299,6 +315,7 @@ final class WorkoutSessionController: ObservableObject {
     func cancelBeforeStart() {
         cameraRecorder.stopSession()
         poseRecognition.stop()
+        diagnosticsRecorder?.finish(state: "cancelled")
         cleanupTemporaryFiles(keepOutput: false)
         resetSessionState()
         phase = .idle
@@ -384,15 +401,7 @@ final class WorkoutSessionController: ObservableObject {
 
     private func finalize(reason: WorkoutEndReason) async {
         guard !isFinalizing, phase == .active || phase == .finishing else { return }
-        let finalizationSessionID = recognitionSessionID
         isFinalizing = true
-        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "FinishWorkoutVideo")
-        defer {
-            if backgroundTask != .invalid {
-                UIApplication.shared.endBackgroundTask(backgroundTask)
-            }
-        }
-        phase = .processing
         isAutomaticCountingActive = false
         speech.stop()
 
@@ -405,88 +414,111 @@ final class WorkoutSessionController: ObservableObject {
             remainingSeconds = max(0, config.durationSeconds - elapsedSeconds)
         }
 
-        do {
-            var videoURL: URL?
-            if config.recordingEnabled {
-                await poseRecognition.pauseAndDrain()
-                await cameraRecorder.stopSessionAndWait()
-                let finished = try await cameraRecorder.stopRecording()
-                rawURL = finished.url
-                let historyRecord = try WorkoutHistoryStore.shared.addReadyVideo(
-                    videoURL: finished.url,
-                    startedAt: workoutStartedAt,
-                    duration: resultDuration,
-                    recordedDuration: finished.recordedDuration,
-                    count: count,
-                    reason: reason,
-                    config: config
-                )
-                currentRecordID = historyRecord.id
-                rawURL = nil
-                videoURL = WorkoutHistoryStore.shared.videoURL(for: historyRecord)
-            } else {
-                let historyRecord = WorkoutHistoryStore.shared.addWithoutVideo(
-                    startedAt: workoutStartedAt,
-                    duration: resultDuration,
-                    count: count,
-                    reason: reason,
-                    config: config
-                )
-                currentRecordID = historyRecord.id
-            }
+        let finalCount = count
+        let finalizationSessionID = recognitionSessionID
+        diagnosticsRecorder?.recordEvent("finalization_started", detail: "reason=\(reason.rawValue),count=\(finalCount)")
 
-            cameraRecorder.stopSession()
-            guard recognitionSessionID == finalizationSessionID else { return }
-            result = WorkoutResult(
-                duration: resultDuration,
-                count: count,
-                endReason: reason,
-                videoURL: videoURL,
-                previewImageData: nil
-            )
-            isVideoProcessing = false
-            phase = .result
-            isFinalizing = false
-            if let videoURL {
-                Task { [weak self] in
-                    let previewImageData = await VideoPosterGenerator.jpegData(for: videoURL)
-                    guard let self,
-                          recognitionSessionID == finalizationSessionID,
-                          let currentResult = result,
-                          currentResult.videoURL == videoURL else { return }
-                    result = WorkoutResult(
-                        duration: currentResult.duration,
-                        count: currentResult.count,
-                        endReason: currentResult.endReason,
-                        videoURL: currentResult.videoURL,
-                        previewImageData: previewImageData
-                    )
-                }
-            }
-        } catch {
-            guard recognitionSessionID == finalizationSessionID else { return }
-            cameraRecorder.stopSession()
-            isFinalizing = false
-            isVideoProcessing = false
-            let failedRecord = WorkoutHistoryStore.shared.addFailedVideo(
+        if config.recordingEnabled {
+            let pending = WorkoutHistoryStore.shared.beginRealtimeVideoFinalization(
                 startedAt: workoutStartedAt,
                 duration: resultDuration,
-                recordedDuration: recordedDuration,
-                count: count,
+                count: finalCount,
                 reason: reason,
-                config: config,
-                message: error.localizedDescription
+                config: config
             )
-            currentRecordID = failedRecord.id
+            currentRecordID = pending.id
+            isVideoProcessing = true
             result = WorkoutResult(
                 duration: resultDuration,
-                count: count,
+                count: finalCount,
                 endReason: reason,
                 videoURL: nil,
                 previewImageData: nil
             )
-            errorMessage = "录像写入失败，成绩已保留：\(error.localizedDescription)"
             phase = .result
+            Task { [weak self] in
+                await self?.completeVideoFinalization(
+                    recordID: pending.id,
+                    sessionID: finalizationSessionID
+                )
+            }
+        } else {
+            let historyRecord = WorkoutHistoryStore.shared.addWithoutVideo(
+                startedAt: workoutStartedAt,
+                duration: resultDuration,
+                count: finalCount,
+                reason: reason,
+                config: config
+            )
+            currentRecordID = historyRecord.id
+            diagnosticsRecorder?.finish(state: "completed")
+            diagnosticsRecorder = nil
+            result = WorkoutResult(
+                duration: resultDuration,
+                count: finalCount,
+                endReason: reason,
+                videoURL: nil,
+                previewImageData: nil
+            )
+            isVideoProcessing = false
+            isFinalizing = false
+            phase = .result
+        }
+    }
+
+    private func completeVideoFinalization(recordID: UUID, sessionID: UUID) async {
+        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "FinishWorkoutVideo")
+        defer {
+            if backgroundTask != .invalid {
+                UIApplication.shared.endBackgroundTask(backgroundTask)
+            }
+        }
+        do {
+            await poseRecognition.pauseAndDrain()
+            await cameraRecorder.stopSessionAndWait()
+            let finished = try await cameraRecorder.stopRecording()
+            rawURL = finished.url
+            let historyRecord = try WorkoutHistoryStore.shared.completeRealtimeVideo(recordID, videoURL: finished.url)
+            rawURL = nil
+            guard recognitionSessionID == sessionID else { return }
+            let videoURL = WorkoutHistoryStore.shared.videoURL(for: historyRecord)
+            if let videoURL {
+                await diagnosticsRecorder?.attachVideo(from: videoURL)
+            }
+            diagnosticsRecorder?.finish(state: "completed")
+            diagnosticsRecorder = nil
+            let current = result
+            result = WorkoutResult(
+                duration: current?.duration ?? historyRecord.duration,
+                count: current?.count ?? historyRecord.count,
+                endReason: current?.endReason ?? historyRecord.endReason,
+                videoURL: videoURL,
+                previewImageData: nil
+            )
+            isVideoProcessing = false
+            isFinalizing = false
+            if let videoURL {
+                let previewImageData = await VideoPosterGenerator.jpegData(for: videoURL)
+                guard recognitionSessionID == sessionID, let currentResult = result else { return }
+                result = WorkoutResult(
+                    duration: currentResult.duration,
+                    count: currentResult.count,
+                    endReason: currentResult.endReason,
+                    videoURL: currentResult.videoURL,
+                    previewImageData: previewImageData
+                )
+            }
+        } catch {
+            WorkoutHistoryStore.shared.failRealtimeVideo(recordID, message: error.localizedDescription)
+            diagnosticsRecorder?.recordEvent("finalization_failed", detail: error.localizedDescription)
+            diagnosticsRecorder?.finish(state: "failed", error: error.localizedDescription)
+            diagnosticsRecorder = nil
+            guard recognitionSessionID == sessionID else { return }
+            cameraRecorder.stopSession()
+            rawURL = nil
+            isFinalizing = false
+            isVideoProcessing = false
+            errorMessage = "录像写入失败，成绩已保留：\(error.localizedDescription)"
         }
     }
 
@@ -494,6 +526,9 @@ final class WorkoutSessionController: ObservableObject {
         cameraRecorder.stopSession()
         poseRecognition.stop()
         speech.stop()
+        diagnosticsRecorder?.recordEvent("session_failed", detail: error.localizedDescription)
+        diagnosticsRecorder?.finish(state: "failed", error: error.localizedDescription)
+        diagnosticsRecorder = nil
         errorMessage = error.localizedDescription
         phase = .failed
     }
@@ -522,6 +557,7 @@ final class WorkoutSessionController: ObservableObject {
         announcedSeconds = []
         lastCountEventOffset = 0
         isFinalizing = false
+        diagnosticsRecorder = nil
         recognitionSessionID = UUID()
     }
 

@@ -54,6 +54,7 @@ struct ResultView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
+                    .disabled(session.isVideoProcessing)
 
                     Button(session.isSaved ? "完成，返回设置" : "放弃并返回设置") {
                         session.returnHome()
@@ -61,6 +62,12 @@ struct ResultView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
+                    .disabled(session.isVideoProcessing)
+                    if session.isVideoProcessing {
+                        Text("视频完成后即可重新录制或返回设置")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(18)
             }
@@ -90,12 +97,18 @@ struct ResultView: View {
         } else if session.isVideoProcessing {
             ZStack {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color.workoutInk)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.workoutGreen.opacity(0.16), Color.workoutGreen.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                 VStack(spacing: 12) {
-                    ProgressView().tint(.white)
-                    Text("相机已关闭\n正在生成视频")
+                    ProgressView().tint(Color.workoutGreen)
+                    Text("成绩已保存\n视频正在后台完成")
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                 }
             }
             .frame(height: 220)

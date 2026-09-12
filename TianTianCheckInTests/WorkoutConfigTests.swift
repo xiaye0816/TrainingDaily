@@ -71,6 +71,7 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertEqual(config.exerciseType, .sitUp)
         XCTAssertEqual(config.countingMode, .manual)
         XCTAssertTrue(config.autoStartWhenPersonReady)
+        XCTAssertFalse(config.diagnosticsEnabled)
         XCTAssertTrue(config.stopAnnouncementEnabled)
     }
 
@@ -357,6 +358,90 @@ final class WorkoutConfigTests: XCTestCase {
         )
 
         XCTAssertFalse(restored.autoStartWhenPersonReady)
+    }
+
+    func testDiagnosticPreferencePersists() throws {
+        var config = WorkoutConfig.default
+        config.diagnosticsEnabled = true
+
+        let restored = try JSONDecoder().decode(
+            WorkoutConfig.self,
+            from: JSONEncoder().encode(config)
+        )
+
+        XCTAssertTrue(restored.diagnosticsEnabled)
+    }
+
+    func testSitUpCounterCountsWithoutVisibleAnkle() {
+        var counter = SitUpRepCounter()
+        let withoutAnkle: (TimeInterval, Bool) -> BodyPoseSample = { uptime, isUp in
+            let original = self.sitUpSample(uptime: uptime, isUp: isUp)
+            return BodyPoseSample(
+                captureUptime: uptime,
+                points: original.points.filter { $0.key != .leftAnkle },
+                personCount: 1
+            )
+        }
+
+        XCTAssertNil(counter.process(withoutAnkle(0, false)))
+        XCTAssertNil(counter.process(withoutAnkle(0.08, false)))
+        XCTAssertNotNil(counter.process(withoutAnkle(0.16, true)))
+    }
+
+    func testSitUpCounterRejectsStandingAfterLyingPose() {
+        var counter = SitUpRepCounter()
+        _ = counter.process(sitUpSample(uptime: 0, isUp: false))
+        _ = counter.process(sitUpSample(uptime: 0.08, isUp: false))
+        let standing = BodyPoseSample(
+            captureUptime: 0.7,
+            points: [
+                .leftShoulder: point(0.5, 0.85),
+                .leftHip: point(0.5, 0.55),
+                .leftKnee: point(0.5, 0.3),
+                .leftAnkle: point(0.5, 0.08)
+            ],
+            personCount: 1
+        )
+
+        XCTAssertNil(counter.process(standing))
+    }
+
+    @MainActor
+    func testRealtimeHistoryFinalizationUpdatesSameRecord() throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TrainingDailyRealtimeHistory-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let store = WorkoutHistoryStore(baseDirectory: baseDirectory)
+        let pending = store.beginRealtimeVideoFinalization(
+            startedAt: Date(), duration: 30, count: 12, reason: .manual, config: .default
+        )
+        let source = baseDirectory.appendingPathComponent("source.mov")
+        try Data("video".utf8).write(to: source)
+
+        let completed = try store.completeRealtimeVideo(pending.id, videoURL: source)
+
+        XCTAssertEqual(completed.id, pending.id)
+        XCTAssertEqual(completed.videoState, .ready)
+        XCTAssertNotNil(store.videoURL(for: completed))
+    }
+
+    @MainActor
+    func testInterruptedRealtimeFinalizationKeepsScoreAndMarksFailed() {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TrainingDailyInterruptedHistory-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let firstStore = WorkoutHistoryStore(baseDirectory: baseDirectory)
+        let pending = firstStore.beginRealtimeVideoFinalization(
+            startedAt: Date(), duration: 30, count: 9, reason: .manual, config: .default
+        )
+
+        let reloaded = WorkoutHistoryStore(baseDirectory: baseDirectory)
+
+        XCTAssertEqual(reloaded.records.first?.id, pending.id)
+        XCTAssertEqual(reloaded.records.first?.count, 9)
+        XCTAssertEqual(reloaded.records.first?.videoState, .failed)
     }
 
     func testSitUpCounterDoesNotCountAnIncompleteMovement() {
