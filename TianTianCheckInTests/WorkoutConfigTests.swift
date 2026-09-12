@@ -70,19 +70,34 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertFalse(config.microphoneEnabled)
         XCTAssertEqual(config.exerciseType, .sitUp)
         XCTAssertEqual(config.countingMode, .manual)
-        XCTAssertEqual(config.finishSoundStyle, .softWhistle)
+        XCTAssertTrue(config.stopAnnouncementEnabled)
     }
 
-    func testFinishSoundSelectionPersistsInConfiguration() throws {
+    func testStopAnnouncementSelectionPersistsInConfiguration() throws {
         var config = WorkoutConfig.default
-        config.finishSoundStyle = .doubleWhistle
+        config.stopAnnouncementEnabled = false
 
-        let restored = try JSONDecoder().decode(
+        let encoded = try JSONEncoder().encode(config)
+        let restored = try JSONDecoder().decode(WorkoutConfig.self, from: encoded)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+
+        XCTAssertFalse(restored.stopAnnouncementEnabled)
+        XCTAssertEqual(object["stopAnnouncementEnabled"] as? Bool, false)
+        XCTAssertNil(object["finishSoundStyle"])
+    }
+
+    func testLegacyFinishSoundMigratesToStopAnnouncement() throws {
+        let enabled = try JSONDecoder().decode(
             WorkoutConfig.self,
-            from: JSONEncoder().encode(config)
+            from: Data(#"{"finishSoundStyle":"doubleWhistle"}"#.utf8)
+        )
+        let disabled = try JSONDecoder().decode(
+            WorkoutConfig.self,
+            from: Data(#"{"finishSoundStyle":"off"}"#.utf8)
         )
 
-        XCTAssertEqual(restored.finishSoundStyle, .doubleWhistle)
+        XCTAssertTrue(enabled.stopAnnouncementEnabled)
+        XCTAssertFalse(disabled.stopAnnouncementEnabled)
     }
 
     func testDefaultTimeAnnouncementSchedule() {
@@ -242,39 +257,30 @@ final class WorkoutConfigTests: XCTestCase {
         )
     }
 
-    func testAudioLevelPolicyLeavesSpeechUntouchedOutsideFinishSound() {
+    func testAudioLevelPolicyLeavesMicrophoneUntouchedOutsideSpeech() {
         XCTAssertEqual(
-            WorkoutAudioLevelPolicy.mixedSample(original: 0.42, finishSound: 0, ducking: 0),
+            WorkoutAudioLevelPolicy.mixedSample(original: 0.42, speech: 0, ducking: 0),
             0.42
         )
         XCTAssertEqual(
-            WorkoutAudioLevelPolicy.mixedSample(original: -0.97, finishSound: 0, ducking: 0),
+            WorkoutAudioLevelPolicy.mixedSample(original: -0.97, speech: 0, ducking: 0),
             -0.97
         )
         XCTAssertLessThanOrEqual(
-            WorkoutAudioLevelPolicy.mixedSample(original: 1, finishSound: 1, ducking: 1),
+            WorkoutAudioLevelPolicy.mixedSample(original: 1, speech: 1, ducking: 1),
             WorkoutAudioLevelPolicy.peakLimit
         )
-        XCTAssertEqual(
-            WorkoutAudioLevelPolicy.mixedSample(original: 0.5, finishSound: 0, ducking: 1),
-            0.5 * WorkoutAudioLevelPolicy.finishSoundMicrophoneGain,
-            accuracy: 0.0001
+        XCTAssertGreaterThan(
+            WorkoutAudioLevelPolicy.mixedSample(original: 0, speech: 0.7, ducking: 1),
+            0.5
+        )
+        XCTAssertLessThan(
+            WorkoutAudioLevelPolicy.mixedSample(original: 0.5, speech: 0, ducking: 1),
+            0.5
         )
     }
 
-    func testFinishSoundChoicesStartAndEndAtSilence() {
-        for style in FinishSoundStyle.allCases where style != .off {
-            XCTAssertEqual(RealtimeRecordingWriter.finishSoundSample(style: style, at: -0.01), 0)
-            XCTAssertEqual(RealtimeRecordingWriter.finishSoundSample(style: style, at: 0), 0)
-            XCTAssertNotEqual(RealtimeRecordingWriter.finishSoundSample(style: style, at: 0.1), 0)
-            XCTAssertEqual(RealtimeRecordingWriter.finishSoundSample(style: style, at: style.duration), 0)
-            XCTAssertEqual(RealtimeRecordingWriter.finishSoundEnvelope(style: style, at: style.duration), 0)
-            XCTAssertLessThanOrEqual(style.duration, WorkoutTimingPolicy.finishTailDuration)
-        }
-        XCTAssertEqual(RealtimeRecordingWriter.finishSoundSample(style: .off, at: 0.1), 0)
-    }
-
-    func testRealtimeWriterCreatesPlayableMovieWithOverlayAndFinishSound() async throws {
+    func testRealtimeWriterCreatesPlayableMovieWithOverlayAndSpeech() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("RealtimeWriterTest-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -286,7 +292,16 @@ final class WorkoutConfigTests: XCTestCase {
             if frame == 30 {
                 writer.updateOverlay(RecordingOverlaySnapshot(timeText: "00:02", count: 9))
             }
-            if frame == 45 { writer.scheduleFinishSound(.doubleWhistle, atUptime: start + 1.5) }
+            if frame == 45 {
+                let samples = (0..<24_000).map { index in
+                    Float(sin(2 * Double.pi * 440 * Double(index) / SpeechClip.sampleRate)) * 0.35
+                }
+                writer.scheduleSpeechClip(
+                    SpeechClip(text: "停", samples: samples),
+                    atUptime: start + 1.5,
+                    volume: 1
+                )
+            }
             writer.appendVideo(try makeVideoSample(pts: start + Double(frame) / 30))
             // Mirror the camera's real-time delivery cadence so AVAssetWriter does
             // not intentionally discard nearly every test frame while encoding.

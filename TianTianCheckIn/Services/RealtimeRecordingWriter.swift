@@ -34,16 +34,20 @@ enum RealtimeRecordingWriterError: LocalizedError {
 
 enum WorkoutAudioLevelPolicy {
     static let peakLimit: Float = 0.95
-    static let finishSoundMicrophoneGain: Float = 0.08
+    static let speechMicrophoneGain: Float = 0.18
 
-    static func mixedSample(original: Float, finishSound: Float, ducking: Float) -> Float {
+    static func mixedSample(original: Float, speech: Float, ducking: Float) -> Float {
         guard ducking > 0 else { return original }
-        let microphoneGain = 1 - ducking * (1 - finishSoundMicrophoneGain)
-        return min(
-            max(original * microphoneGain + finishSound, -peakLimit),
-            peakLimit
-        )
+        let microphoneGain = 1 - ducking * (1 - speechMicrophoneGain)
+        let mixed = original * microphoneGain + speech
+        return peakLimit * tanh(mixed / peakLimit)
     }
+}
+
+private struct ScheduledSpeechClip {
+    let clip: SpeechClip
+    let startUptime: TimeInterval
+    let volume: Float
 }
 
 /// Encodes the finished 720p movie while the workout is happening. All append
@@ -65,9 +69,8 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
     private var renderedSnapshot: RecordingOverlaySnapshot?
     private var renderedSize = CGSize.zero
     private var overlayImage: CIImage?
-    private var finishSoundStartUptime: TimeInterval?
-    private var finishSoundStyle = FinishSoundStyle.off
-    private var syntheticFinishSoundWasAppended = false
+    private var speechClips: [ScheduledSpeechClip] = []
+    private var syntheticAudioCursor: TimeInterval?
     private var isArmed = false
     private var isFinishing = false
 
@@ -84,13 +87,9 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         snapshotLock.unlock()
     }
 
-    func scheduleFinishSound(_ style: FinishSoundStyle, atUptime uptime: TimeInterval) {
-        guard style != .off else { return }
-        finishSoundStyle = style
-        finishSoundStartUptime = uptime
-        if !includeMicrophone {
-            appendSyntheticFinishSoundIfPossible(atUptime: uptime)
-        }
+    func scheduleSpeechClip(_ clip: SpeechClip, atUptime uptime: TimeInterval, volume: Float) {
+        speechClips.append(ScheduledSpeechClip(clip: clip, startUptime: uptime, volume: volume))
+        speechClips.sort { $0.startUptime < $1.startUptime }
     }
 
     func appendVideo(_ sampleBuffer: CMSampleBuffer) {
@@ -138,6 +137,9 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
                 throw RealtimeRecordingWriterError.appendFailed(assetWriter.error)
             }
             lastVideoPTS = pts
+            if !includeMicrophone {
+                appendSyntheticAudio(upTo: CMTimeGetSeconds(pts))
+            }
         } catch {
             assetWriter?.cancelWriting()
         }
@@ -164,8 +166,8 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
             return
         }
         isFinishing = true
-        if !includeMicrophone, let finishSoundStartUptime, !syntheticFinishSoundWasAppended {
-            appendSyntheticFinishSoundIfPossible(atUptime: finishSoundStartUptime)
+        if !includeMicrophone, let lastVideoPTS {
+            appendSyntheticAudio(upTo: CMTimeGetSeconds(lastVideoPTS) + 1.0 / 30.0)
         }
         guard let assetWriter, let outputURL, let firstVideoPTS else {
             completion(.failure(RealtimeRecordingWriterError.missingVideoFrame))
@@ -363,10 +365,10 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         guard count > 0 else { return }
         for index in 0..<count {
             let uptime = startPTS + Double(index / channels) / sampleRate
-            let mix = finishSoundMix(atUptime: uptime)
+            let mix = speechMix(atUptime: uptime)
             samples[index] = WorkoutAudioLevelPolicy.mixedSample(
                 original: samples[index],
-                finishSound: mix.sample,
+                speech: mix.sample,
                 ducking: mix.ducking
             )
         }
@@ -376,123 +378,60 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         guard count > 0 else { return }
         for index in 0..<count {
             let uptime = startPTS + Double(index / channels) / sampleRate
-            let mix = finishSoundMix(atUptime: uptime)
+            let mix = speechMix(atUptime: uptime)
             let original = Float(samples[index]) / Float(Int16.max)
             let mixed = WorkoutAudioLevelPolicy.mixedSample(
                 original: original,
-                finishSound: mix.sample,
+                speech: mix.sample,
                 ducking: mix.ducking
             )
             samples[index] = Int16(mixed * Float(Int16.max))
         }
     }
 
-    private func finishSoundMix(atUptime uptime: TimeInterval) -> (sample: Float, ducking: Float) {
-        guard let finishSoundStartUptime else { return (0, 0) }
-        let time = uptime - finishSoundStartUptime
-        return (
-            Self.finishSoundSample(style: finishSoundStyle, at: time),
-            Self.finishSoundEnvelope(style: finishSoundStyle, at: time)
-        )
-    }
-
-    static func finishSoundEnvelope(style: FinishSoundStyle, at time: TimeInterval) -> Float {
-        guard style != .off, time >= 0, time < style.duration else { return 0 }
-        let attack = min(1, time / 0.025)
-        let release = min(1, (style.duration - time) / 0.075)
-        return Float(max(0, min(attack, release)))
-    }
-
-    static func finishSoundSample(style: FinishSoundStyle, at time: TimeInterval) -> Float {
-        guard style != .off, time >= 0, time < style.duration else { return 0 }
-
-        switch style {
-        case .softWhistle:
-            let envelope = toneEnvelope(time: time, start: 0, duration: style.duration, attack: 0.035, release: 0.10)
-            return whistleTone(time: time, baseFrequency: 1_880, sweep: 120, vibratoDepth: 18, gain: 0.42) * envelope
-
-        case .crispWhistle:
-            let envelope = toneEnvelope(time: time, start: 0, duration: style.duration, attack: 0.018, release: 0.065)
-            return whistleTone(time: time, baseFrequency: 2_420, sweep: 260, vibratoDepth: 26, gain: 0.38) * envelope
-
-        case .doubleWhistle:
-            let first = doubleWhistleBurst(time: time, start: 0, frequency: 2_050)
-            let second = doubleWhistleBurst(time: time, start: 0.26, frequency: 2_260)
-            return first + second
-
-        case .gentleChime:
-            let attack = min(1, time / 0.012)
-            let decay = exp(-4.4 * time)
-            let first = sin(2 * Double.pi * 880 * time)
-            let second = sin(2 * Double.pi * 1_320 * time) * 0.34
-            return Float((first + second) * attack * decay * 0.34)
-
-        case .off:
-            return 0
+    private func speechMix(atUptime uptime: TimeInterval) -> (sample: Float, ducking: Float) {
+        var mixed: Float = 0
+        var ducking: Float = 0
+        for scheduled in speechClips {
+            let frame = Int((uptime - scheduled.startUptime) * SpeechClip.sampleRate)
+            guard frame >= 0, frame < scheduled.clip.samples.count else { continue }
+            mixed += scheduled.clip.samples[frame] * scheduled.volume
+            let fadeFrames = max(1, Int(SpeechClip.sampleRate * 0.01))
+            let fadeIn = min(1, Float(frame) / Float(fadeFrames))
+            let fadeOut = min(1, Float(scheduled.clip.samples.count - frame) / Float(fadeFrames))
+            ducking = max(ducking, min(fadeIn, fadeOut))
         }
+        return (mixed, ducking)
     }
 
-    private static func whistleTone(
-        time: TimeInterval,
-        baseFrequency: Double,
-        sweep: Double,
-        vibratoDepth: Double,
-        gain: Double
-    ) -> Float {
-        let vibratoRate = 6.2
-        let phaseCycles = baseFrequency * time
-            + sweep * time * time / 2
-            + vibratoDepth / (2 * Double.pi * vibratoRate)
-                * (1 - cos(2 * Double.pi * vibratoRate * time))
-        let fundamental = sin(2 * Double.pi * phaseCycles)
-        let breathHarmonic = sin(2 * Double.pi * phaseCycles * 2.005) * 0.10
-        return Float((fundamental + breathHarmonic) * gain)
-    }
-
-    private static func doubleWhistleBurst(time: TimeInterval, start: TimeInterval, frequency: Double) -> Float {
-        let duration = 0.18
-        let localTime = time - start
-        let envelope = toneEnvelope(time: time, start: start, duration: duration, attack: 0.022, release: 0.065)
-        guard envelope > 0 else { return 0 }
-        return whistleTone(
-            time: localTime,
-            baseFrequency: frequency,
-            sweep: 90,
-            vibratoDepth: 14,
-            gain: 0.36
-        ) * envelope
-    }
-
-    private static func toneEnvelope(
-        time: TimeInterval,
-        start: TimeInterval,
-        duration: TimeInterval,
-        attack: TimeInterval,
-        release: TimeInterval
-    ) -> Float {
-        let localTime = time - start
-        guard localTime >= 0, localTime < duration else { return 0 }
-        let fadeIn = min(1, localTime / attack)
-        let fadeOut = min(1, (duration - localTime) / release)
-        let shaped = sin(Double.pi / 2 * max(0, min(fadeIn, fadeOut)))
-        return Float(shaped * shaped)
-    }
-
-    private func appendSyntheticFinishSoundIfPossible(atUptime uptime: TimeInterval) {
-        guard !syntheticFinishSoundWasAppended,
-              finishSoundStyle != .off,
-              let assetWriter, assetWriter.status == .writing,
-              let audioInput, audioInput.isReadyForMoreMediaData else { return }
+    private func appendSyntheticAudio(upTo endUptime: TimeInterval) {
+        guard let assetWriter, assetWriter.status == .writing,
+              let audioInput else { return }
         let sampleRate: Int32 = 48_000
-        let frameCount = Int(Double(sampleRate) * finishSoundStyle.duration)
-        var samples = [Int16](repeating: 0, count: frameCount)
-        for index in samples.indices {
-            let value = Self.finishSoundSample(style: finishSoundStyle, at: Double(index) / Double(sampleRate))
-            samples[index] = Int16(min(max(value, -WorkoutAudioLevelPolicy.peakLimit), WorkoutAudioLevelPolicy.peakLimit) * Float(Int16.max))
+        var cursor = syntheticAudioCursor ?? firstVideoPTS.map(CMTimeGetSeconds) ?? endUptime
+        let chunkFrames = 480
+        while cursor < endUptime, audioInput.isReadyForMoreMediaData {
+            let remainingFrames = Int((endUptime - cursor) * Double(sampleRate))
+            let frameCount = min(chunkFrames, remainingFrames)
+            guard frameCount > 0 else { break }
+            var samples = [Int16](repeating: 0, count: frameCount)
+            for index in samples.indices {
+                let uptime = cursor + Double(index) / Double(sampleRate)
+                let sample = speechMix(atUptime: uptime).sample
+                let limited = WorkoutAudioLevelPolicy.peakLimit * tanh(sample / WorkoutAudioLevelPolicy.peakLimit)
+                samples[index] = Int16(limited * Float(Int16.max))
+            }
+            guard let buffer = Self.makeAudioSampleBuffer(
+                samples: samples,
+                sampleRate: sampleRate,
+                presentationTime: cursor
+            ), audioInput.append(buffer) else {
+                assetWriter.cancelWriting()
+                return
+            }
+            cursor += Double(frameCount) / Double(sampleRate)
+            syntheticAudioCursor = cursor
         }
-        guard let sampleBuffer = Self.makeAudioSampleBuffer(samples: samples, sampleRate: sampleRate, presentationTime: uptime),
-              audioInput.append(sampleBuffer) else { return }
-        syntheticFinishSoundWasAppended = true
     }
 
     private static func makeAudioSampleBuffer(samples: [Int16], sampleRate: Int32, presentationTime: TimeInterval) -> CMSampleBuffer? {
@@ -567,9 +506,8 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         renderedSnapshot = nil
         renderedSize = .zero
         overlayImage = nil
-        finishSoundStartUptime = nil
-        finishSoundStyle = .off
-        syntheticFinishSoundWasAppended = false
+        speechClips.removeAll()
+        syntheticAudioCursor = nil
         isArmed = false
         isFinishing = false
         outputURL = nil
@@ -581,57 +519,5 @@ private final class SendableRealtimeAssetWriter: @unchecked Sendable {
 
     init(_ value: AVAssetWriter) {
         self.value = value
-    }
-}
-
-@MainActor
-final class FinishSoundPlayer {
-    static let shared = FinishSoundPlayer()
-
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
-    private let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
-
-    private init() {
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
-    }
-
-    func preview(_ style: FinishSoundStyle) {
-        guard style != .off else {
-            stop()
-            return
-        }
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default)
-        try? session.setActive(true)
-        play(style)
-    }
-
-    func play(_ style: FinishSoundStyle) {
-        guard style != .off else { return }
-        let frameCount = AVAudioFrameCount(48_000 * style.duration)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
-              let channel = buffer.floatChannelData?[0] else { return }
-        buffer.frameLength = frameCount
-        for index in 0..<Int(frameCount) {
-            channel[index] = RealtimeRecordingWriter.finishSoundSample(
-                style: style,
-                at: Double(index) / 48_000
-            )
-        }
-        do {
-            if !engine.isRunning { try engine.start() }
-            player.stop()
-            player.scheduleBuffer(buffer, at: nil, options: [])
-            player.play()
-        } catch {
-            // The digitally mixed video cue remains available if live playback fails.
-        }
-    }
-
-    func stop() {
-        player.stop()
-        engine.pause()
     }
 }

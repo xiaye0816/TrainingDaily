@@ -133,7 +133,12 @@ struct SetupView: View {
             }
             Toggle("时间到自动结束", isOn: $config.autoStopAtTimerEnd)
             if config.autoStopAtTimerEnd {
-                FinishSoundPickerRow(selection: $config.finishSoundStyle)
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("结束时播报“停”", isOn: $config.stopAnnouncementEnabled)
+                    Text("口令播完后继续录像 0.5 秒。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -224,58 +229,6 @@ struct SetupView: View {
     }
 }
 
-private struct FinishSoundPickerRow: View {
-    @Binding var selection: FinishSoundStyle
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 12) {
-                Text("结束提示音")
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Menu {
-                    ForEach(FinishSoundStyle.allCases) { style in
-                        Button {
-                            selection = style
-                            FinishSoundPlayer.shared.preview(style)
-                        } label: {
-                            if selection == style {
-                                Label(style.title, systemImage: "checkmark")
-                            } else {
-                                Text(style.title)
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Text(selection.title)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption2.weight(.semibold))
-                    }
-                    .foregroundStyle(Color.workoutGreen)
-                }
-                .accessibilityLabel("结束提示音，\(selection.title)")
-
-                Button {
-                    FinishSoundPlayer.shared.preview(selection)
-                } label: {
-                    Image(systemName: selection == .off ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.circle)
-                .disabled(selection == .off)
-                .accessibilityLabel("试听\(selection.title)")
-            }
-            Text("选择时会自动试听，也可点扬声器重播。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
 private struct SettingMenuRow<Items: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
@@ -320,6 +273,11 @@ private struct SettingMenuRow<Items: View>: View {
             }
             .foregroundStyle(Color.workoutGreen)
         }
+        // Menu can report a transient zero/undersized intrinsic width on its
+        // first render. Pinning its label prevents “每 X 次” from wrapping
+        // until the enclosing toggle causes a second layout pass.
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(2)
         .accessibilityLabel("\(title)，\(value)")
     }
 }

@@ -71,9 +71,7 @@ struct HistoryView: View {
 private struct HistoryDetailView: View {
     @ObservedObject private var history = WorkoutHistoryStore.shared
     let recordID: UUID
-    @State private var saveError: String?
-    @State private var isSaving = false
-    @State private var saveMessage: String?
+    @StateObject private var photoSave = PhotoSaveCoordinator()
 
     private var record: WorkoutRecord? {
         history.records.first { $0.id == recordID }
@@ -104,24 +102,11 @@ private struct HistoryDetailView: View {
 
                     if let url = history.videoURL(for: record) {
                         Button {
-                            guard !isSaving else { return }
-                            isSaving = true
-                            saveError = nil
-                            Task {
-                                do {
-                                    try await PhotoLibrarySaver.saveVideo(at: url)
-                                    history.markSavedToPhotos(record.id)
-                                    saveMessage = "已保存到相册，可再次保存"
-                                    isSaving = false
-                                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                                    saveMessage = nil
-                                } catch {
-                                    isSaving = false
-                                    saveError = error.localizedDescription
-                                }
+                            photoSave.save(videoURL: url) {
+                                history.markSavedToPhotos(record.id)
                             }
                         } label: {
-                            if isSaving {
+                            if photoSave.state.isSaving {
                                 HStack {
                                     ProgressView().tint(.white)
                                     Text("正在保存")
@@ -131,22 +116,12 @@ private struct HistoryDetailView: View {
                             }
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(isSaving)
-                    }
-
-                    if let saveMessage {
-                        Label(saveMessage, systemImage: "checkmark.circle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(Color.workoutGreen)
+                        .disabled(photoSave.state.isSaving)
                     }
 
                     if record.videoState == .failed, record.sourceVideoFilename != nil {
                         Button("重新处理视频") { history.retry(record.id) }
                             .buttonStyle(.borderedProminent)
-                    }
-
-                    if let saveError {
-                        Text(saveError).font(.footnote).foregroundStyle(.red)
                     }
                 }
                 .padding(18)
@@ -155,6 +130,12 @@ private struct HistoryDetailView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle(record?.exercise.title ?? "训练记录")
         .navigationBarTitleDisplayMode(.inline)
+        .overlay(alignment: .top) {
+            PhotoSaveToast(coordinator: photoSave)
+                .padding(.horizontal, 18)
+                .padding(.top, 10)
+                .zIndex(10)
+        }
     }
 
     private func statusCard(_ record: WorkoutRecord) -> some View {

@@ -42,47 +42,17 @@ enum CountingMode: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum FinishSoundStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+private enum LegacyFinishSoundStyle: String, Codable, Sendable {
     case softWhistle
     case crispWhistle
     case doubleWhistle
     case gentleChime
     case off
 
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .softWhistle: "温和短哨"
-        case .crispWhistle: "清脆短哨"
-        case .doubleWhistle: "双声哨"
-        case .gentleChime: "柔和提示音"
-        case .off: "关闭"
-        }
-    }
-
-    var duration: TimeInterval {
-        switch self {
-        case .softWhistle: 0.44
-        case .crispWhistle: 0.30
-        case .doubleWhistle: 0.48
-        case .gentleChime: 0.46
-        case .off: 0
-        }
-    }
 }
 
 enum AppFeatureAvailability {
-    // Automatic counting remains available in development builds for field
-    // calibration. Release builds stay manual-only until the labelled-video
-    // acceptance gate documented in Docs/AUTO_COUNTING.md has passed.
-    static var automaticCounting: Bool {
-#if DEBUG
-        true
-#else
-        false
-#endif
-    }
+    static let automaticCounting = true
 }
 
 struct WorkoutConfig: Codable, Equatable, Sendable {
@@ -99,7 +69,7 @@ struct WorkoutConfig: Codable, Equatable, Sendable {
     var timeAnnouncementEnabled = true
     var timeAnnouncementInterval = 10
     var finalCountdownEnabled = true
-    var finishSoundStyle = FinishSoundStyle.softWhistle
+    var stopAnnouncementEnabled = true
 
     var recordingEnabled = true
     var microphoneEnabled = true
@@ -165,6 +135,7 @@ extension WorkoutConfig {
         case timeAnnouncementEnabled
         case timeAnnouncementInterval
         case finalCountdownEnabled
+        case stopAnnouncementEnabled
         case finishSoundStyle
         case recordingEnabled
         case microphoneEnabled
@@ -184,9 +155,33 @@ extension WorkoutConfig {
         timeAnnouncementEnabled = try container.decodeIfPresent(Bool.self, forKey: .timeAnnouncementEnabled) ?? defaults.timeAnnouncementEnabled
         timeAnnouncementInterval = try container.decodeIfPresent(Int.self, forKey: .timeAnnouncementInterval) ?? defaults.timeAnnouncementInterval
         finalCountdownEnabled = try container.decodeIfPresent(Bool.self, forKey: .finalCountdownEnabled) ?? defaults.finalCountdownEnabled
-        finishSoundStyle = try container.decodeIfPresent(FinishSoundStyle.self, forKey: .finishSoundStyle) ?? defaults.finishSoundStyle
+        if let stopAnnouncementEnabled = try container.decodeIfPresent(Bool.self, forKey: .stopAnnouncementEnabled) {
+            self.stopAnnouncementEnabled = stopAnnouncementEnabled
+        } else if let legacyStyle = try container.decodeIfPresent(LegacyFinishSoundStyle.self, forKey: .finishSoundStyle) {
+            stopAnnouncementEnabled = legacyStyle != .off
+        } else {
+            stopAnnouncementEnabled = defaults.stopAnnouncementEnabled
+        }
         recordingEnabled = try container.decodeIfPresent(Bool.self, forKey: .recordingEnabled) ?? defaults.recordingEnabled
         microphoneEnabled = try container.decodeIfPresent(Bool.self, forKey: .microphoneEnabled) ?? defaults.microphoneEnabled
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(timerEnabled, forKey: .timerEnabled)
+        try container.encode(durationSeconds, forKey: .durationSeconds)
+        try container.encode(autoStopAtTimerEnd, forKey: .autoStopAtTimerEnd)
+        try container.encode(counterEnabled, forKey: .counterEnabled)
+        try container.encode(exerciseType, forKey: .exerciseType)
+        try container.encode(countingMode, forKey: .countingMode)
+        try container.encode(countAnnouncementEnabled, forKey: .countAnnouncementEnabled)
+        try container.encode(countAnnouncementInterval, forKey: .countAnnouncementInterval)
+        try container.encode(timeAnnouncementEnabled, forKey: .timeAnnouncementEnabled)
+        try container.encode(timeAnnouncementInterval, forKey: .timeAnnouncementInterval)
+        try container.encode(finalCountdownEnabled, forKey: .finalCountdownEnabled)
+        try container.encode(stopAnnouncementEnabled, forKey: .stopAnnouncementEnabled)
+        try container.encode(recordingEnabled, forKey: .recordingEnabled)
+        try container.encode(microphoneEnabled, forKey: .microphoneEnabled)
     }
 }
 

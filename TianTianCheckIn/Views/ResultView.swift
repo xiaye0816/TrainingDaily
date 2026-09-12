@@ -33,7 +33,7 @@ struct ResultView: View {
                         Button {
                             session.saveResult()
                         } label: {
-                            if session.isSavingToPhotos {
+                            if session.photoSave.state.isSaving {
                                 HStack {
                                     ProgressView().tint(.white)
                                     Text("正在保存")
@@ -43,13 +43,7 @@ struct ResultView: View {
                             }
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(session.isSavingToPhotos)
-                    }
-
-                    if let saveMessage = session.saveMessage {
-                        Label(saveMessage, systemImage: "checkmark.circle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(Color.workoutGreen)
+                        .disabled(session.photoSave.state.isSaving)
                     }
 
                     Button {
@@ -73,6 +67,12 @@ struct ResultView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("本次完成")
             .navigationBarTitleDisplayMode(.inline)
+        }
+        .overlay(alignment: .top) {
+            PhotoSaveToast(coordinator: session.photoSave)
+                .padding(.horizontal, 18)
+                .padding(.top, 10)
+                .zIndex(10)
         }
     }
 

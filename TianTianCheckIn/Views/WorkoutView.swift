@@ -221,7 +221,7 @@ struct WorkoutView: View {
         HStack(spacing: 12) {
             if session.phase == .finishing {
                 Label(
-                    session.currentConfig.finishSoundStyle == .off ? "即将完成" : "提示音收尾",
+                    session.currentConfig.stopAnnouncementEnabled ? "播报结束口令" : "即将完成",
                     systemImage: "flag.checkered"
                 )
                     .font(.caption.weight(.semibold))

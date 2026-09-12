@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import UIKit
 
@@ -28,13 +29,11 @@ final class WorkoutSessionController: ObservableObject {
     @Published private(set) var selectedZoomFactor: CGFloat = 1
     @Published private(set) var isVideoProcessing = false
     @Published private(set) var currentRecordID: UUID?
-    @Published private(set) var isSavingToPhotos = false
-    @Published private(set) var saveMessage: String?
 
     let cameraRecorder = CameraRecorder()
+    let photoSave = PhotoSaveCoordinator()
 
     private let speech = SpeechCoordinator()
-    private let finishSoundPlayer = FinishSoundPlayer.shared
     private let poseRecognition = PoseRecognitionEngine()
     private var config = WorkoutConfig.default
     private var events: [WorkoutEvent] = []
@@ -45,6 +44,16 @@ final class WorkoutSessionController: ObservableObject {
     private var lastCountEventOffset: TimeInterval = 0
     private var isFinalizing = false
     private var workoutStartedAt = Date()
+    private var photoSaveObservation: AnyCancellable?
+
+    init() {
+        photoSaveObservation = photoSave.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        speech.clipStartedHandler = { [weak self] clip, uptime, volume in
+            self?.cameraRecorder.scheduleSpeechClip(clip, atUptime: uptime, volume: volume)
+        }
+    }
 
     var displayTime: String {
         if config.timerEnabled {
@@ -62,6 +71,7 @@ final class WorkoutSessionController: ObservableObject {
     func prepare(config: WorkoutConfig) {
         resetSessionState()
         self.config = config.normalized
+        speech.preload(Self.announcementPrompts(for: self.config))
         workoutStartedAt = Date()
         remainingSeconds = self.config.durationSeconds
         phase = .preparingCamera
@@ -254,26 +264,13 @@ final class WorkoutSessionController: ObservableObject {
     }
 
     func saveResult() {
-        guard let url = result?.videoURL, !isSavingToPhotos else { return }
-        isSavingToPhotos = true
-        saveMessage = nil
+        guard let url = result?.videoURL else { return }
         errorMessage = nil
-        Task {
-            do {
-                try await PhotoLibrarySaver.saveVideo(at: url)
-                isSaved = true
-                if let currentRecordID {
-                    WorkoutHistoryStore.shared.markSavedToPhotos(currentRecordID)
-                }
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                saveMessage = "已保存到相册，可再次保存"
-                isSavingToPhotos = false
-                let message = saveMessage
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                if saveMessage == message { saveMessage = nil }
-            } catch {
-                isSavingToPhotos = false
-                errorMessage = error.localizedDescription
+        photoSave.save(videoURL: url) { [weak self] in
+            guard let self else { return }
+            isSaved = true
+            if let currentRecordID {
+                WorkoutHistoryStore.shared.markSavedToPhotos(currentRecordID)
             }
         }
     }
@@ -301,6 +298,25 @@ final class WorkoutSessionController: ObservableObject {
     private var currentOffset: TimeInterval {
         guard let activeStartUptime else { return 0 }
         return max(0, ProcessInfo.processInfo.systemUptime - activeStartUptime)
+    }
+
+    private static func announcementPrompts(for config: WorkoutConfig) -> [String] {
+        var prompts = ["3", "2", "1", "开始", "停"]
+        if config.timeAnnouncementEnabled {
+            let upcoming = (1..<config.durationSeconds).reversed().filter {
+                config.shouldAnnounce(remainingSeconds: $0)
+            }.prefix(24)
+            prompts.append(contentsOf: upcoming.map {
+                WorkoutTimingPolicy.announcementText(
+                    remainingSeconds: $0,
+                    finalCountdownEnabled: config.finalCountdownEnabled
+                )
+            })
+        }
+        if config.countAnnouncementEnabled {
+            prompts.append(contentsOf: (1...20).map { "\($0 * config.countAnnouncementInterval)" })
+        }
+        return prompts
     }
 
     private func startClock() {
@@ -347,16 +363,9 @@ final class WorkoutSessionController: ObservableObject {
         remainingSeconds = 0
         updateRecordingOverlay()
         speech.stop()
-        if config.finishSoundStyle != .off {
-            let finishSoundUptime = ProcessInfo.processInfo.systemUptime
-            cameraRecorder.scheduleFinishSound(config.finishSoundStyle, atUptime: finishSoundUptime)
-            finishSoundPlayer.play(config.finishSoundStyle)
-            events.append(
-                WorkoutEvent(
-                    offset: currentOffset,
-                    kind: .announcement("结束提示音：\(config.finishSoundStyle.title)")
-                )
-            )
+        if config.stopAnnouncementEnabled {
+            events.append(WorkoutEvent(offset: currentOffset, kind: .announcement("停")))
+            _ = await speech.speakPriorityAndWait("停")
         }
         try? await Task.sleep(
             nanoseconds: UInt64(WorkoutTimingPolicy.finishTailDuration * 1_000_000_000)
@@ -471,14 +480,14 @@ final class WorkoutSessionController: ObservableObject {
     private func resetSessionState() {
         clockTask?.cancel()
         clockTask = nil
+        speech.stop()
         events = []
         count = 0
         elapsedSeconds = 0
         remainingSeconds = config.durationSeconds
         result = nil
         isSaved = false
-        isSavingToPhotos = false
-        saveMessage = nil
+        photoSave.dismiss()
         errorMessage = nil
         poseStatus = .inactive
         isAutomaticCountingActive = false
@@ -490,7 +499,6 @@ final class WorkoutSessionController: ObservableObject {
         announcedSeconds = []
         lastCountEventOffset = 0
         isFinalizing = false
-        finishSoundPlayer.stop()
         recognitionSessionID = UUID()
     }
 

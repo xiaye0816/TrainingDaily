@@ -142,9 +142,9 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         recordingWriter.updateOverlay(snapshot)
     }
 
-    func scheduleFinishSound(_ style: FinishSoundStyle, atUptime uptime: TimeInterval) {
+    func scheduleSpeechClip(_ clip: SpeechClip, atUptime uptime: TimeInterval, volume: Float) {
         mediaQueue.async { [weak self] in
-            self?.recordingWriter.scheduleFinishSound(style, atUptime: uptime)
+            self?.recordingWriter.scheduleSpeechClip(clip, atUptime: uptime, volume: volume)
         }
     }
 
@@ -296,12 +296,12 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     private func configureAudioSession(includeAudio: Bool) throws {
         let audioSession = AVAudioSession.sharedInstance()
         if includeAudio {
-            try audioSession.setCategory(.playAndRecord, mode: .videoChat, options: [.defaultToSpeaker])
+            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker])
             try audioSession.setPreferredSampleRate(48_000)
             try? audioSession.setPreferredIOBufferDuration(0.01)
             try? audioSession.setPreferredInputNumberOfChannels(1)
         } else {
-            try audioSession.setCategory(.playback, mode: .spokenAudio)
+            try audioSession.setCategory(.playback, mode: .voicePrompt)
         }
         try audioSession.setActive(true)
         enforceBuiltInSpeakerWhenNeeded()
