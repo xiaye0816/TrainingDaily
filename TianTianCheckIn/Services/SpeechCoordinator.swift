@@ -188,16 +188,6 @@ final class SpeechCoordinator {
         Task { await renderer.preload(texts) }
     }
 
-    func preloadAndWait(_ texts: [String]) async {
-        await renderer.preload(texts)
-    }
-
-    func prepareEngine() {
-        guard !engine.isRunning else { return }
-        engine.prepare()
-        try? engine.start()
-    }
-
     @discardableResult
     func speakPriority(_ text: String) -> Bool {
         clipRequestedHandler?(text, ProcessInfo.processInfo.systemUptime)

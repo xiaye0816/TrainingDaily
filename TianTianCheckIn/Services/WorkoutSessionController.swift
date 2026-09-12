@@ -60,7 +60,6 @@ final class WorkoutSessionController: ObservableObject {
     private var workoutStartedAt = Date()
     private var photoSaveObservation: AnyCancellable?
     private var diagnosticsRecorder: WorkoutDiagnosticsRecorder?
-    private var speechPreparationTask: Task<Void, Never>?
 
     init() {
         WorkoutDiagnosticsRecorder.cleanup()
@@ -107,10 +106,11 @@ final class WorkoutSessionController: ObservableObject {
             diagnosticsRecorder = WorkoutDiagnosticsRecorder(config: self.config)
             diagnosticsRecorder?.recordEvent("session_preparing")
         }
-        let essentialPrompts = Self.essentialAnnouncementPrompts(for: self.config)
-        speechPreparationTask = Task { [speech] in
-            await speech.preloadAndWait(essentialPrompts)
-        }
+        // Speech rendering must never hold the camera preparation screen or
+        // pre-start AVAudioEngine while AVCaptureSession configures its audio
+        // route. Warm the cache opportunistically and let playback start the
+        // engine only when a prompt is actually needed.
+        speech.preload(Self.announcementPrompts(for: self.config))
         workoutStartedAt = Date()
         remainingSeconds = self.config.durationSeconds
         phase = .preparingCamera
@@ -153,9 +153,6 @@ final class WorkoutSessionController: ObservableObject {
                     )
                     await refreshZoomOptions()
                 }
-                await speechPreparationTask?.value
-                speech.prepareEngine()
-                speech.preload(Self.announcementPrompts(for: self.config))
                 phase = .framing
                 cameraRecorder.updateOrientation(UIDevice.current.orientation)
                 attemptAutomaticStartIfReady()
@@ -380,14 +377,6 @@ final class WorkoutSessionController: ObservableObject {
         return prompts
     }
 
-    private static func essentialAnnouncementPrompts(for config: WorkoutConfig) -> [String] {
-        var prompts = ["3", "2", "1", "开始", "停"]
-        if config.countAnnouncementEnabled {
-            prompts.append(contentsOf: (1...5).map { "\($0 * config.countAnnouncementInterval)" })
-        }
-        return prompts
-    }
-
     private func startClock() {
         clockTask?.cancel()
         clockTask = Task { [weak self] in
@@ -570,8 +559,6 @@ final class WorkoutSessionController: ObservableObject {
         clockTask = nil
         countdownTask?.cancel()
         countdownTask = nil
-        speechPreparationTask?.cancel()
-        speechPreparationTask = nil
         speech.stop()
         events = []
         count = 0
