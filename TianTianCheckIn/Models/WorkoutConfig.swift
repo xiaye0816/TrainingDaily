@@ -63,6 +63,7 @@ struct WorkoutConfig: Codable, Equatable, Sendable {
     var counterEnabled = true
     var exerciseType = ExerciseType.sitUp
     var countingMode = CountingMode.manual
+    var autoStartWhenPersonReady = true
     var countAnnouncementEnabled = false
     var countAnnouncementInterval = 5
 
@@ -130,6 +131,7 @@ extension WorkoutConfig {
         case counterEnabled
         case exerciseType
         case countingMode
+        case autoStartWhenPersonReady
         case countAnnouncementEnabled
         case countAnnouncementInterval
         case timeAnnouncementEnabled
@@ -150,6 +152,8 @@ extension WorkoutConfig {
         counterEnabled = try container.decodeIfPresent(Bool.self, forKey: .counterEnabled) ?? defaults.counterEnabled
         exerciseType = try container.decodeIfPresent(ExerciseType.self, forKey: .exerciseType) ?? .sitUp
         countingMode = try container.decodeIfPresent(CountingMode.self, forKey: .countingMode) ?? .manual
+        autoStartWhenPersonReady = try container.decodeIfPresent(Bool.self, forKey: .autoStartWhenPersonReady)
+            ?? defaults.autoStartWhenPersonReady
         countAnnouncementEnabled = try container.decodeIfPresent(Bool.self, forKey: .countAnnouncementEnabled) ?? defaults.countAnnouncementEnabled
         countAnnouncementInterval = try container.decodeIfPresent(Int.self, forKey: .countAnnouncementInterval) ?? defaults.countAnnouncementInterval
         timeAnnouncementEnabled = try container.decodeIfPresent(Bool.self, forKey: .timeAnnouncementEnabled) ?? defaults.timeAnnouncementEnabled
@@ -174,6 +178,7 @@ extension WorkoutConfig {
         try container.encode(counterEnabled, forKey: .counterEnabled)
         try container.encode(exerciseType, forKey: .exerciseType)
         try container.encode(countingMode, forKey: .countingMode)
+        try container.encode(autoStartWhenPersonReady, forKey: .autoStartWhenPersonReady)
         try container.encode(countAnnouncementEnabled, forKey: .countAnnouncementEnabled)
         try container.encode(countAnnouncementInterval, forKey: .countAnnouncementInterval)
         try container.encode(timeAnnouncementEnabled, forKey: .timeAnnouncementEnabled)

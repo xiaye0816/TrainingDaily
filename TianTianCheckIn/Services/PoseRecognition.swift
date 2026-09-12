@@ -231,9 +231,8 @@ struct SitUpRepCounter {
     struct Thresholds {
         var downMaximumTorsoAngle = 32.0
         var downMaximumShoulderHeight = 0.18
-        var upMinimumTorsoAngle = 52.0
-        var upMaximumShoulderKneeDistance = 0.76
-        var stableSampleCount = 2
+        var upMinimumTorsoAngle = 45.0
+        var downStableSampleCount = 2
         var minimumRepInterval = 0.45
     }
 
@@ -259,23 +258,20 @@ struct SitUpRepCounter {
         let bodyScale = max(side.shoulder.distance(to: side.ankle), 0.08)
         let rawAngle = abs(atan2(side.shoulder.y - side.hip.y, side.shoulder.x - side.hip.x))
         let torsoAngle = min(rawAngle, abs(.pi - rawAngle)) * 180 / .pi
-        let shoulderKneeDistance = side.shoulder.distance(to: side.knee) / bodyScale
         let shoulderHeight = (side.shoulder.y - side.hip.y) / bodyScale
         let isDown = torsoAngle <= thresholds.downMaximumTorsoAngle
             && shoulderHeight <= thresholds.downMaximumShoulderHeight
         let isUp = torsoAngle >= thresholds.upMinimumTorsoAngle
-            && shoulderKneeDistance <= thresholds.upMaximumShoulderKneeDistance
 
         switch phase {
         case .seekingDown, .waitingForDown:
             stableSamples = isDown ? stableSamples + 1 : 0
-            if stableSamples >= thresholds.stableSampleCount {
+            if stableSamples >= thresholds.downStableSampleCount {
                 phase = .readyForUp
                 stableSamples = 0
             }
         case .readyForUp:
-            stableSamples = isUp ? stableSamples + 1 : 0
-            guard stableSamples >= thresholds.stableSampleCount,
+            guard isUp,
                   sample.captureUptime - lastRepUptime >= thresholds.minimumRepInterval else { return nil }
             phase = .waitingForDown
             stableSamples = 0
@@ -499,7 +495,9 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         let reference = SendablePoseSampleBuffer(sampleBuffer)
         captureQueue.async { [weak self] in
             guard let self else { return }
-            processFrame(reference.value)
+            autoreleasepool {
+                self.processFrame(reference.value)
+            }
             submissionLock.lock()
             hasPendingFrame = false
             submissionLock.unlock()
@@ -537,6 +535,15 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     func pause() {
         captureQueue.async { [weak self] in
             self?.mode = .inactive
+        }
+    }
+
+    func pauseAndDrain() async {
+        await withCheckedContinuation { continuation in
+            captureQueue.async { [weak self] in
+                self?.mode = .inactive
+                continuation.resume()
+            }
         }
     }
 

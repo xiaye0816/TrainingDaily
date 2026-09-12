@@ -21,6 +21,7 @@ enum CameraRecorderError: LocalizedError {
     case cannotAddInput
     case cannotAddOutput
     case recordingDidNotStart
+    case recordingFinishTimedOut
     case recordingFailed(Error?)
 
     var errorDescription: String? {
@@ -31,6 +32,7 @@ enum CameraRecorderError: LocalizedError {
         case .cannotAddInput: "无法连接摄像头或麦克风。"
         case .cannotAddOutput: "无法创建录像输出。"
         case .recordingDidNotStart: "录像未能启动，请重试。"
+        case .recordingFinishTimedOut: "录像生成超时，成绩已保留。"
         case let .recordingFailed(error): error?.localizedDescription ?? "录像失败，请重试。"
         }
     }
@@ -121,18 +123,25 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
 
     func stopRecording() async throws -> RecordingFinish {
         try await withCheckedThrowingContinuation { continuation in
+            let completionGate = RecordingStopCompletionGate()
             mediaQueue.async { [weak self] in
                 guard let self else {
                     continuation.resume(throwing: CameraRecorderError.recordingDidNotStart)
                     return
                 }
                 self.recordingWriter.finish(completionQueue: self.mediaQueue) { result in
+                    guard completionGate.claim() else { return }
                     switch result {
                     case let .success(finish):
                         continuation.resume(returning: finish)
                     case let .failure(error):
                         continuation.resume(throwing: CameraRecorderError.recordingFailed(error))
                     }
+                }
+                self.mediaQueue.asyncAfter(deadline: .now() + 30) { [weak self] in
+                    guard completionGate.claim() else { return }
+                    self?.recordingWriter.cancelFinishing()
+                    continuation.resume(throwing: CameraRecorderError.recordingFinishTimedOut)
                 }
             }
         }
@@ -214,6 +223,22 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
         sessionQueue.async { [weak self] in
             guard let self, self.session.isRunning else { return }
             self.session.stopRunning()
+        }
+    }
+
+    func stopSessionAndWait() async {
+        await withCheckedContinuation { continuation in
+            sessionQueue.async { [weak self] in
+                guard let self else {
+                    continuation.resume()
+                    return
+                }
+                poseAnalyzer = nil
+                if session.isRunning {
+                    session.stopRunning()
+                }
+                continuation.resume()
+            }
         }
     }
 
@@ -423,17 +448,32 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     }
 }
 
+private final class RecordingStopCompletionGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !completed else { return false }
+        completed = true
+        return true
+    }
+}
+
 extension CameraRecorder: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        if output === videoOutput {
-            poseAnalyzer?.submit(sampleBuffer)
-            recordingWriter.appendVideo(sampleBuffer)
-        } else if output === audioOutput {
-            recordingWriter.appendAudio(sampleBuffer)
+        autoreleasepool {
+            if output === videoOutput {
+                poseAnalyzer?.submit(sampleBuffer)
+                recordingWriter.appendVideo(sampleBuffer)
+            } else if output === audioOutput {
+                recordingWriter.appendAudio(sampleBuffer)
+            }
         }
     }
 }

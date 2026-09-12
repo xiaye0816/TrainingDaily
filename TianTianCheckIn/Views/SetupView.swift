@@ -151,6 +151,14 @@ struct SetupView: View {
                 }
             }
             .pickerStyle(.segmented)
+            if config.countingMode == .automatic {
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("识别到人物后自动开始", isOn: $config.autoStartWhenPersonReady)
+                    Text("主体清晰入镜后会自动播放 3、2、1，无需再点准备按钮。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Toggle("计次播报", isOn: $config.countAnnouncementEnabled)
             if config.countAnnouncementEnabled {
                 SettingMenuRow(

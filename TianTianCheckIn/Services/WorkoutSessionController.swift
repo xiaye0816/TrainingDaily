@@ -38,6 +38,7 @@ final class WorkoutSessionController: ObservableObject {
     private var config = WorkoutConfig.default
     private var events: [WorkoutEvent] = []
     private var clockTask: Task<Void, Never>?
+    private var countdownTask: Task<Void, Never>?
     private var activeStartUptime: TimeInterval?
     private var rawURL: URL?
     private var announcedSeconds: Set<Int> = []
@@ -114,6 +115,7 @@ final class WorkoutSessionController: ObservableObject {
                 }
                 phase = .framing
                 cameraRecorder.updateOrientation(UIDevice.current.orientation)
+                attemptAutomaticStartIfReady()
             } catch {
                 fail(error)
             }
@@ -121,9 +123,13 @@ final class WorkoutSessionController: ObservableObject {
     }
 
     func beginCountdown(orientation: UIDeviceOrientation) {
-        guard phase == .framing, canBeginCountdown else { return }
+        guard phase == .framing, canBeginCountdown, countdownTask == nil else { return }
+        // Change phase synchronously so consecutive Vision callbacks cannot
+        // enqueue more than one countdown before the task begins executing.
+        phase = .countdown(3)
 
-        Task {
+        countdownTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 if config.countingMode == .automatic {
                     poseRecognition.pause()
@@ -157,9 +163,12 @@ final class WorkoutSessionController: ObservableObject {
                 speech.speakPriority("开始")
                 events.append(WorkoutEvent(offset: 0, kind: .announcement("开始")))
                 startClock()
+                countdownTask = nil
             } catch is CancellationError {
+                countdownTask = nil
                 return
             } catch {
+                countdownTask = nil
                 fail(error)
             }
         }
@@ -385,7 +394,6 @@ final class WorkoutSessionController: ObservableObject {
         }
         phase = .processing
         isAutomaticCountingActive = false
-        poseRecognition.pause()
         speech.stop()
 
         let recordedDuration = max(0.1, currentOffset)
@@ -399,11 +407,11 @@ final class WorkoutSessionController: ObservableObject {
 
         do {
             var videoURL: URL?
-            var previewImageData: Data?
             if config.recordingEnabled {
+                await poseRecognition.pauseAndDrain()
+                await cameraRecorder.stopSessionAndWait()
                 let finished = try await cameraRecorder.stopRecording()
                 rawURL = finished.url
-                cameraRecorder.stopSession()
                 let historyRecord = try WorkoutHistoryStore.shared.addReadyVideo(
                     videoURL: finished.url,
                     startedAt: workoutStartedAt,
@@ -416,9 +424,6 @@ final class WorkoutSessionController: ObservableObject {
                 currentRecordID = historyRecord.id
                 rawURL = nil
                 videoURL = WorkoutHistoryStore.shared.videoURL(for: historyRecord)
-                if let videoURL {
-                    previewImageData = await VideoPosterGenerator.jpegData(for: videoURL)
-                }
             } else {
                 let historyRecord = WorkoutHistoryStore.shared.addWithoutVideo(
                     startedAt: workoutStartedAt,
@@ -437,11 +442,27 @@ final class WorkoutSessionController: ObservableObject {
                 count: count,
                 endReason: reason,
                 videoURL: videoURL,
-                previewImageData: previewImageData
+                previewImageData: nil
             )
             isVideoProcessing = false
             phase = .result
             isFinalizing = false
+            if let videoURL {
+                Task { [weak self] in
+                    let previewImageData = await VideoPosterGenerator.jpegData(for: videoURL)
+                    guard let self,
+                          recognitionSessionID == finalizationSessionID,
+                          let currentResult = result,
+                          currentResult.videoURL == videoURL else { return }
+                    result = WorkoutResult(
+                        duration: currentResult.duration,
+                        count: currentResult.count,
+                        endReason: currentResult.endReason,
+                        videoURL: currentResult.videoURL,
+                        previewImageData: previewImageData
+                    )
+                }
+            }
         } catch {
             guard recognitionSessionID == finalizationSessionID else { return }
             cameraRecorder.stopSession()
@@ -480,6 +501,8 @@ final class WorkoutSessionController: ObservableObject {
     private func resetSessionState() {
         clockTask?.cancel()
         clockTask = nil
+        countdownTask?.cancel()
+        countdownTask = nil
         speech.stop()
         events = []
         count = 0
@@ -507,9 +530,18 @@ final class WorkoutSessionController: ObservableObject {
     private func handlePoseStatus(_ status: PoseTrackingStatus) {
         guard config.countingMode == .automatic else { return }
         poseStatus = status
+        attemptAutomaticStartIfReady()
         if status == .performanceFallback {
             isAutomaticCountingActive = false
         }
+    }
+
+    private func attemptAutomaticStartIfReady() {
+        guard phase == .framing,
+              config.countingMode == .automatic,
+              config.autoStartWhenPersonReady,
+              poseStatus.isReady else { return }
+        beginCountdown(orientation: UIDevice.current.orientation)
     }
 
     private func handleAutomaticDetection(_ detection: RepDetection) {

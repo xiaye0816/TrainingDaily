@@ -73,11 +73,14 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
     private var syntheticAudioCursor: TimeInterval?
     private var isArmed = false
     private var isFinishing = false
+    private var terminalError: Error?
+    private var generationID: UUID?
 
     func arm(url: URL, includeMicrophone: Bool) {
         reset()
         outputURL = url
         self.includeMicrophone = includeMicrophone
+        generationID = UUID()
         isArmed = true
     }
 
@@ -141,7 +144,7 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
                 appendSyntheticAudio(upTo: CMTimeGetSeconds(pts))
             }
         } catch {
-            assetWriter?.cancelWriting()
+            failWriting(error)
         }
     }
 
@@ -153,7 +156,7 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
               let audioInput, audioInput.isReadyForMoreMediaData else { return }
         processAudioInPlace(sampleBuffer)
         if !audioInput.append(sampleBuffer) {
-            assetWriter.cancelWriting()
+            failWriting(RealtimeRecordingWriterError.appendFailed(assetWriter.error))
         }
     }
 
@@ -174,6 +177,17 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
             reset()
             return
         }
+        if let terminalError {
+            completion(.failure(terminalError))
+            reset()
+            return
+        }
+        guard assetWriter.status == .writing else {
+            let error = RealtimeRecordingWriterError.appendFailed(assetWriter.error)
+            completion(.failure(error))
+            reset()
+            return
+        }
         videoInput?.markAsFinished()
         audioInput?.markAsFinished()
         let recordedDuration: TimeInterval = {
@@ -181,6 +195,7 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
             return max(0, CMTimeGetSeconds(CMTimeSubtract(lastVideoPTS, firstVideoPTS)) + 1.0 / 30.0)
         }()
         let writerReference = SendableRealtimeAssetWriter(assetWriter)
+        let finishingGenerationID = generationID
         writerReference.value.finishWriting { [weak self] in
             guard let self else { return }
             let complete = {
@@ -190,7 +205,9 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
                 } else {
                     result = .failure(RealtimeRecordingWriterError.appendFailed(writerReference.value.error))
                 }
-                self.reset()
+                if self.generationID == finishingGenerationID {
+                    self.reset()
+                }
                 completion(result)
             }
             if let completionQueue {
@@ -199,6 +216,13 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
                 complete()
             }
         }
+    }
+
+    func cancelFinishing() {
+        if assetWriter?.status == .writing || assetWriter?.status == .unknown {
+            assetWriter?.cancelWriting()
+        }
+        reset()
     }
 
     private func configureWriter(width: Int, height: Int) throws {
@@ -426,7 +450,7 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
                 sampleRate: sampleRate,
                 presentationTime: cursor
             ), audioInput.append(buffer) else {
-                assetWriter.cancelWriting()
+                failWriting(RealtimeRecordingWriterError.appendFailed(assetWriter.error))
                 return
             }
             cursor += Double(frameCount) / Double(sampleRate)
@@ -510,7 +534,17 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         syntheticAudioCursor = nil
         isArmed = false
         isFinishing = false
+        terminalError = nil
+        generationID = nil
         outputURL = nil
+    }
+
+    private func failWriting(_ error: Error) {
+        guard terminalError == nil else { return }
+        terminalError = error
+        if assetWriter?.status == .writing || assetWriter?.status == .unknown {
+            assetWriter?.cancelWriting()
+        }
     }
 }
 

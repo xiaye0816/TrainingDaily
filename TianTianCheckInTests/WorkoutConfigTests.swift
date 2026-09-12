@@ -70,6 +70,7 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertFalse(config.microphoneEnabled)
         XCTAssertEqual(config.exerciseType, .sitUp)
         XCTAssertEqual(config.countingMode, .manual)
+        XCTAssertTrue(config.autoStartWhenPersonReady)
         XCTAssertTrue(config.stopAnnouncementEnabled)
     }
 
@@ -333,18 +334,29 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertGreaterThan(changedPixelCount(earlyFrame, laterFrame), 20)
     }
 
-    func testSitUpCounterCountsOnlyCompleteCycles() {
+    func testSitUpCounterCountsAsSoonAsPersonRises() {
         var counter = SitUpRepCounter()
 
         XCTAssertNil(counter.process(sitUpSample(uptime: 0.00, isUp: false)))
         XCTAssertNil(counter.process(sitUpSample(uptime: 0.08, isUp: false)))
-        XCTAssertNil(counter.process(sitUpSample(uptime: 0.16, isUp: true)))
-        XCTAssertNotNil(counter.process(sitUpSample(uptime: 0.24, isUp: true)))
+        XCTAssertNotNil(counter.process(sitUpSample(uptime: 0.16, isUp: true)))
+        XCTAssertNil(counter.process(sitUpSample(uptime: 0.24, isUp: true)))
         XCTAssertNil(counter.process(sitUpSample(uptime: 0.32, isUp: true)))
         XCTAssertNil(counter.process(sitUpSample(uptime: 0.40, isUp: false)))
         XCTAssertNil(counter.process(sitUpSample(uptime: 0.48, isUp: false)))
-        XCTAssertNil(counter.process(sitUpSample(uptime: 0.72, isUp: true)))
-        XCTAssertNotNil(counter.process(sitUpSample(uptime: 0.80, isUp: true)))
+        XCTAssertNotNil(counter.process(sitUpSample(uptime: 0.96, isUp: true)))
+    }
+
+    func testAutomaticStartPreferencePersists() throws {
+        var config = WorkoutConfig.default
+        config.autoStartWhenPersonReady = false
+
+        let restored = try JSONDecoder().decode(
+            WorkoutConfig.self,
+            from: JSONEncoder().encode(config)
+        )
+
+        XCTAssertFalse(restored.autoStartWhenPersonReady)
     }
 
     func testSitUpCounterDoesNotCountAnIncompleteMovement() {

@@ -137,7 +137,13 @@ struct WorkoutView: View {
                 Button {
                     session.beginCountdown(orientation: UIDevice.current.orientation)
                 } label: {
-                    Label("准备好了", systemImage: "checkmark")
+                    Label(
+                        session.currentConfig.countingMode == .automatic
+                            && session.currentConfig.autoStartWhenPersonReady
+                            ? "识别后自动开始"
+                            : "准备好了",
+                        systemImage: "checkmark"
+                    )
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(!session.canBeginCountdown)
