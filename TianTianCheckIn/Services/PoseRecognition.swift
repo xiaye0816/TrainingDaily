@@ -242,7 +242,8 @@ struct SitUpRepCounter {
     struct Thresholds {
         var downMaximumTorsoAngle = 32.0
         var downMaximumShoulderHeight = 0.18
-        var upMinimumTorsoAngle = 45.0
+        var upMinimumTorsoAngle = 30.0
+        var minimumShoulderRise = 0.10
         var downStableSampleCount = 2
         var minimumRepInterval = 0.45
     }
@@ -258,6 +259,7 @@ struct SitUpRepCounter {
     private var lastRepUptime = -Double.infinity
     private var downHip: PosePoint?
     private var downBodyScale = 0.1
+    private var downShoulderHeight = 0.0
     private let thresholds: Thresholds
 
     init(thresholds: Thresholds = Thresholds()) {
@@ -284,7 +286,9 @@ struct SitUpRepCounter {
             return acos(cosine) * 180 / .pi >= 155
         }()
         let isStanding = hipDisplacement > 0.42 || bodyAlignedStanding
-        let isUp = torsoAngle >= thresholds.upMinimumTorsoAngle && !isStanding
+        let isUp = torsoAngle >= thresholds.upMinimumTorsoAngle
+            && shoulderHeight - downShoulderHeight >= thresholds.minimumShoulderRise
+            && !isStanding
 
         switch phase {
         case .seekingDown, .waitingForDown:
@@ -293,6 +297,7 @@ struct SitUpRepCounter {
                 phase = .readyForUp
                 downHip = side.hip
                 downBodyScale = bodyScale
+                downShoulderHeight = shoulderHeight
                 stableSamples = 0
             }
         case .readyForUp:
@@ -314,6 +319,7 @@ struct SitUpRepCounter {
         phase = .seekingDown
         stableSamples = 0
         downHip = nil
+        downShoulderHeight = 0
     }
 }
 

@@ -14,6 +14,19 @@ enum WorkoutPhase: Equatable {
     case failed
 }
 
+enum WorkoutScreenAwakePolicy {
+    static func preventsAutoLock(phase: WorkoutPhase, isVideoProcessing: Bool) -> Bool {
+        switch phase {
+        case .preparingCamera, .framing, .countdown, .active, .finishing, .processing:
+            true
+        case .result:
+            isVideoProcessing
+        case .idle, .failed:
+            false
+        }
+    }
+}
+
 @MainActor
 final class WorkoutSessionController: ObservableObject {
     @Published private(set) var phase: WorkoutPhase = .idle
@@ -47,6 +60,7 @@ final class WorkoutSessionController: ObservableObject {
     private var workoutStartedAt = Date()
     private var photoSaveObservation: AnyCancellable?
     private var diagnosticsRecorder: WorkoutDiagnosticsRecorder?
+    private var speechPreparationTask: Task<Void, Never>?
 
     init() {
         WorkoutDiagnosticsRecorder.cleanup()
@@ -54,7 +68,15 @@ final class WorkoutSessionController: ObservableObject {
             self?.objectWillChange.send()
         }
         speech.clipStartedHandler = { [weak self] clip, uptime, volume in
+            self?.diagnosticsRecorder?.recordEvent(
+                "speech_started",
+                detail: "text=\(clip.text),volume=\(volume)",
+                uptime: uptime
+            )
             self?.cameraRecorder.scheduleSpeechClip(clip, atUptime: uptime, volume: volume)
+        }
+        speech.clipRequestedHandler = { [weak self] text, uptime in
+            self?.diagnosticsRecorder?.recordEvent("speech_requested", detail: "text=\(text)", uptime: uptime)
         }
     }
 
@@ -67,6 +89,13 @@ final class WorkoutSessionController: ObservableObject {
 
     var currentConfig: WorkoutConfig { config }
 
+    var preventsAutoLock: Bool {
+        WorkoutScreenAwakePolicy.preventsAutoLock(
+            phase: phase,
+            isVideoProcessing: isVideoProcessing
+        )
+    }
+
     var canBeginCountdown: Bool {
         config.countingMode != .automatic || poseStatus.isReady
     }
@@ -78,7 +107,10 @@ final class WorkoutSessionController: ObservableObject {
             diagnosticsRecorder = WorkoutDiagnosticsRecorder(config: self.config)
             diagnosticsRecorder?.recordEvent("session_preparing")
         }
-        speech.preload(Self.announcementPrompts(for: self.config))
+        let essentialPrompts = Self.essentialAnnouncementPrompts(for: self.config)
+        speechPreparationTask = Task { [speech] in
+            await speech.preloadAndWait(essentialPrompts)
+        }
         workoutStartedAt = Date()
         remainingSeconds = self.config.durationSeconds
         phase = .preparingCamera
@@ -121,6 +153,9 @@ final class WorkoutSessionController: ObservableObject {
                     )
                     await refreshZoomOptions()
                 }
+                await speechPreparationTask?.value
+                speech.prepareEngine()
+                speech.preload(Self.announcementPrompts(for: self.config))
                 phase = .framing
                 cameraRecorder.updateOrientation(UIDevice.current.orientation)
                 attemptAutomaticStartIfReady()
@@ -345,6 +380,14 @@ final class WorkoutSessionController: ObservableObject {
         return prompts
     }
 
+    private static func essentialAnnouncementPrompts(for config: WorkoutConfig) -> [String] {
+        var prompts = ["3", "2", "1", "开始", "停"]
+        if config.countAnnouncementEnabled {
+            prompts.append(contentsOf: (1...5).map { "\($0 * config.countAnnouncementInterval)" })
+        }
+        return prompts
+    }
+
     private func startClock() {
         clockTask?.cancel()
         clockTask = Task { [weak self] in
@@ -493,21 +536,10 @@ final class WorkoutSessionController: ObservableObject {
                 count: current?.count ?? historyRecord.count,
                 endReason: current?.endReason ?? historyRecord.endReason,
                 videoURL: videoURL,
-                previewImageData: nil
+                previewImageData: finished.previewImageData
             )
             isVideoProcessing = false
             isFinalizing = false
-            if let videoURL {
-                let previewImageData = await VideoPosterGenerator.jpegData(for: videoURL)
-                guard recognitionSessionID == sessionID, let currentResult = result else { return }
-                result = WorkoutResult(
-                    duration: currentResult.duration,
-                    count: currentResult.count,
-                    endReason: currentResult.endReason,
-                    videoURL: currentResult.videoURL,
-                    previewImageData: previewImageData
-                )
-            }
         } catch {
             WorkoutHistoryStore.shared.failRealtimeVideo(recordID, message: error.localizedDescription)
             diagnosticsRecorder?.recordEvent("finalization_failed", detail: error.localizedDescription)
@@ -538,6 +570,8 @@ final class WorkoutSessionController: ObservableObject {
         clockTask = nil
         countdownTask?.cancel()
         countdownTask = nil
+        speechPreparationTask?.cancel()
+        speechPreparationTask = nil
         speech.stop()
         events = []
         count = 0

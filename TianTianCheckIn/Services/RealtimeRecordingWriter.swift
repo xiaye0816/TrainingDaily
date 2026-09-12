@@ -12,6 +12,7 @@ struct RecordingOverlaySnapshot: Equatable, Sendable {
 struct RecordingFinish: Sendable {
     let url: URL
     let recordedDuration: TimeInterval
+    let previewImageData: Data?
 }
 
 enum RealtimeRecordingWriterError: LocalizedError {
@@ -65,6 +66,7 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var firstVideoPTS: CMTime?
     private var lastVideoPTS: CMTime?
+    private var previewImageData: Data?
     private var latestSnapshot = RecordingOverlaySnapshot(timeText: nil, count: nil)
     private var renderedSnapshot: RecordingOverlaySnapshot?
     private var renderedSize = CGSize.zero
@@ -136,6 +138,10 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
                 image = overlay.composited(over: image)
             }
             ciContext.render(image, to: destination, bounds: bounds, colorSpace: colorSpace)
+            if previewImageData == nil,
+               let preview = ciContext.createCGImage(CIImage(cvPixelBuffer: destination), from: bounds) {
+                previewImageData = UIImage(cgImage: preview).jpegData(compressionQuality: 0.82)
+            }
             guard pixelBufferAdaptor.append(destination, withPresentationTime: pts) else {
                 throw RealtimeRecordingWriterError.appendFailed(assetWriter.error)
             }
@@ -196,12 +202,19 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         }()
         let writerReference = SendableRealtimeAssetWriter(assetWriter)
         let finishingGenerationID = generationID
+        let finishedPreviewImageData = previewImageData
         writerReference.value.finishWriting { [weak self] in
             guard let self else { return }
             let complete = {
                 let result: Result<RecordingFinish, Error>
                 if writerReference.value.status == .completed {
-                    result = .success(RecordingFinish(url: outputURL, recordedDuration: recordedDuration))
+                    result = .success(
+                        RecordingFinish(
+                            url: outputURL,
+                            recordedDuration: recordedDuration,
+                            previewImageData: finishedPreviewImageData
+                        )
+                    )
                 } else {
                     result = .failure(RealtimeRecordingWriterError.appendFailed(writerReference.value.error))
                 }
@@ -527,6 +540,7 @@ final class RealtimeRecordingWriter: @unchecked Sendable {
         pixelBufferAdaptor = nil
         firstVideoPTS = nil
         lastVideoPTS = nil
+        previewImageData = nil
         renderedSnapshot = nil
         renderedSize = .zero
         overlayImage = nil

@@ -14,6 +14,18 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertFalse(flow.isShowingSplash)
     }
 
+    func testWorkoutPreventsAutoLockUntilVideoProcessingCompletes() {
+        XCTAssertFalse(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .idle, isVideoProcessing: false))
+        XCTAssertTrue(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .preparingCamera, isVideoProcessing: false))
+        XCTAssertTrue(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .framing, isVideoProcessing: false))
+        XCTAssertTrue(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .countdown(3), isVideoProcessing: false))
+        XCTAssertTrue(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .active, isVideoProcessing: false))
+        XCTAssertTrue(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .finishing, isVideoProcessing: false))
+        XCTAssertTrue(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .result, isVideoProcessing: true))
+        XCTAssertFalse(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .result, isVideoProcessing: false))
+        XCTAssertFalse(WorkoutScreenAwakePolicy.preventsAutoLock(phase: .failed, isVideoProcessing: false))
+    }
+
     func testNativeLaunchScreenUsesLightStoryboardAndSharedAssets() {
         XCTAssertEqual(
             Bundle.main.object(forInfoDictionaryKey: "UILaunchStoryboardName") as? String,
@@ -333,6 +345,10 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertGreaterThan(earlyFrame.height, 0)
         XCTAssertGreaterThan(brightPixelCount(in: earlyFrame), 100)
         XCTAssertGreaterThan(changedPixelCount(earlyFrame, laterFrame), 20)
+        let posterData = try XCTUnwrap(finish.previewImageData)
+        let poster = try XCTUnwrap(UIImage(data: posterData))
+        XCTAssertGreaterThan(poster.size.width, 0)
+        XCTAssertGreaterThan(poster.size.height, 0)
     }
 
     func testSitUpCounterCountsAsSoonAsPersonRises() {
@@ -346,6 +362,25 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertNil(counter.process(sitUpSample(uptime: 0.40, isUp: false)))
         XCTAssertNil(counter.process(sitUpSample(uptime: 0.48, isUp: false)))
         XCTAssertNotNil(counter.process(sitUpSample(uptime: 0.96, isUp: true)))
+    }
+
+    func testSitUpCounterCountsAtFirstClearShoulderLift() {
+        var counter = SitUpRepCounter()
+        _ = counter.process(sitUpSample(uptime: 0, isUp: false))
+        _ = counter.process(sitUpSample(uptime: 0.08, isUp: false))
+        let earlyRise = BodyPoseSample(
+            captureUptime: 0.16,
+            points: [
+                .leftShoulder: point(0.28, 0.33),
+                .leftHip: point(0.50, 0.20),
+                .leftKnee: point(0.65, 0.38),
+                .leftAnkle: point(0.78, 0.12)
+            ],
+            personCount: 1
+        )
+
+        XCTAssertNotNil(counter.process(earlyRise))
+        XCTAssertNil(counter.process(earlyRise))
     }
 
     func testAutomaticStartPreferencePersists() throws {
@@ -450,7 +485,7 @@ final class WorkoutConfigTests: XCTestCase {
         _ = counter.process(sitUpSample(uptime: 0.08, isUp: false))
 
         let partialPoints: [BodyJoint: PosePoint] = [
-            .leftShoulder: point(0.35, 0.32),
+            .leftShoulder: point(0.30, 0.26),
             .leftHip: point(0.50, 0.20),
             .leftKnee: point(0.65, 0.38),
             .leftAnkle: point(0.78, 0.12)

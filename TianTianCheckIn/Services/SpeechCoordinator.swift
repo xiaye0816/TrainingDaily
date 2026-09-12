@@ -98,7 +98,10 @@ private actor SpeechClipRenderer {
     private var cache: [String: SpeechClip] = [:]
 
     func preload(_ texts: [String]) async {
-        for text in Set(texts) { _ = await clip(for: text) }
+        var seen: Set<String> = []
+        for text in texts where seen.insert(text).inserted {
+            _ = await clip(for: text)
+        }
     }
 
     func clip(for text: String) async -> SpeechClip? {
@@ -171,8 +174,10 @@ private actor SpeechClipRenderer {
 @MainActor
 final class SpeechCoordinator {
     typealias ClipStartedHandler = @MainActor (SpeechClip, TimeInterval, Float) -> Void
+    typealias ClipRequestedHandler = @MainActor (String, TimeInterval) -> Void
 
     var clipStartedHandler: ClipStartedHandler?
+    var clipRequestedHandler: ClipRequestedHandler?
 
     private let renderer = SpeechClipRenderer()
     private let engine = AVAudioEngine()
@@ -183,20 +188,33 @@ final class SpeechCoordinator {
         Task { await renderer.preload(texts) }
     }
 
+    func preloadAndWait(_ texts: [String]) async {
+        await renderer.preload(texts)
+    }
+
+    func prepareEngine() {
+        guard !engine.isRunning else { return }
+        engine.prepare()
+        try? engine.start()
+    }
+
     @discardableResult
     func speakPriority(_ text: String) -> Bool {
+        clipRequestedHandler?(text, ProcessInfo.processInfo.systemUptime)
         enqueue(text)
         return true
     }
 
     @discardableResult
     func speakCount(_ text: String) -> Bool {
+        clipRequestedHandler?(text, ProcessInfo.processInfo.systemUptime)
         enqueue(text)
         return true
     }
 
     @discardableResult
     func speakPriorityAndWait(_ text: String) async -> Bool {
+        clipRequestedHandler?(text, ProcessInfo.processInfo.systemUptime)
         let expectedGeneration = generation
         guard let clip = await renderer.clip(for: text), generation == expectedGeneration else {
             return false

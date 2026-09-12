@@ -15,6 +15,7 @@ struct RootView: View {
     @EnvironmentObject private var configStore: ConfigStore
     @EnvironmentObject private var session: WorkoutSessionController
     @State private var flow = RootFlowState()
+    @State private var previousIdleTimerSetting: Bool?
 
     var body: some View {
         ZStack {
@@ -31,6 +32,11 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(.light)
+        .onAppear { updateIdleTimerProtection() }
+        .onChange(of: session.preventsAutoLock) { _, _ in
+            updateIdleTimerProtection()
+        }
+        .onDisappear { restoreIdleTimerSetting() }
         .task {
             guard flow.isShowingSplash else { return }
             await Task.yield()
@@ -45,6 +51,23 @@ struct RootView: View {
                 flow.dismissSplash()
             }
         }
+    }
+
+    private func updateIdleTimerProtection() {
+        if session.preventsAutoLock {
+            if previousIdleTimerSetting == nil {
+                previousIdleTimerSetting = UIApplication.shared.isIdleTimerDisabled
+            }
+            UIApplication.shared.isIdleTimerDisabled = true
+        } else {
+            restoreIdleTimerSetting()
+        }
+    }
+
+    private func restoreIdleTimerSetting() {
+        guard let previousIdleTimerSetting else { return }
+        UIApplication.shared.isIdleTimerDisabled = previousIdleTimerSetting
+        self.previousIdleTimerSetting = nil
     }
 
     @ViewBuilder

@@ -92,7 +92,7 @@ struct ResultView: View {
             )
                 .aspectRatio(9 / 16, contentMode: .fit)
                 .frame(maxHeight: 460)
-                .background(.black)
+                .background(Color.workoutGreen.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         } else if session.isVideoProcessing {
             ZStack {
@@ -156,16 +156,16 @@ struct ResultView: View {
 
 enum VideoPosterGenerator {
     static func jpegData(for url: URL) async -> Data? {
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        do {
-            let image = try await generator.image(at: .zero).image
-            return UIImage(cgImage: image).jpegData(compressionQuality: 0.82)
-        } catch {
-            return nil
-        }
+        let duration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
+        let preferredSeconds = duration.isFinite ? min(0.5, max(0.05, duration / 2)) : 0.5
+        let time = CMTime(seconds: preferredSeconds, preferredTimescale: 600)
+        guard let image = try? await generator.image(at: time).image else { return nil }
+        return UIImage(cgImage: image).jpegData(compressionQuality: 0.82)
     }
 }
 
@@ -177,6 +177,7 @@ private final class WorkoutVideoPreviewModel: ObservableObject {
     private let url: URL
     private var timeObserver: Any?
     private var hasPrepared = false
+    private var hasRequestedPlayback = false
 
     init(url: URL, initialPosterData: Data?) {
         self.url = url
@@ -198,9 +199,9 @@ private final class WorkoutVideoPreviewModel: ObservableObject {
             forInterval: CMTime(value: 1, timescale: 60),
             queue: .main
         ) { [weak self] time in
-            guard time.seconds > 0.02 else { return }
             Task { @MainActor [weak self] in
-                self?.isShowingPoster = false
+                guard let self, hasRequestedPlayback, time.seconds > 0.02 else { return }
+                isShowingPoster = false
             }
         }
         if poster == nil {
@@ -214,6 +215,7 @@ private final class WorkoutVideoPreviewModel: ObservableObject {
     }
 
     func play() {
+        hasRequestedPlayback = true
         player.play()
     }
 
@@ -244,10 +246,12 @@ struct WorkoutVideoPreview: View {
                             .resizable()
                             .scaledToFill()
                     } else {
-                        Color.workoutInk
-                            .overlay {
-                                ProgressView().tint(.white)
-                            }
+                        LinearGradient(
+                            colors: [Color.workoutGreen.opacity(0.16), Color.workoutGreen.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        .overlay { ProgressView().tint(Color.workoutGreen) }
                     }
                 }
                 .clipped()
