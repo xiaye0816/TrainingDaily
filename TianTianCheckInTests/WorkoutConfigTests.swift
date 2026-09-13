@@ -441,6 +441,91 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertNil(PoseQualityEvaluator.adjustment(for: sample, exercise: .sitUp))
     }
 
+    func testSitUpPoseCanCountWithoutKneeUsingTorsoContinuity() {
+        var counter = SitUpRepCounter()
+        let down = BodyPoseSample(
+            captureUptime: 0,
+            points: [
+                .neck: point(0.25, 0.20, confidence: 0.55),
+                .root: point(0.50, 0.20, confidence: 0.45)
+            ],
+            personCount: 1
+        )
+        let up = BodyPoseSample(
+            captureUptime: 0.5,
+            points: [
+                .neck: point(0.30, 0.31, confidence: 0.50),
+                .root: point(0.50, 0.20, confidence: 0.42)
+            ],
+            personCount: 1
+        )
+
+        XCTAssertNil(PoseQualityEvaluator.adjustment(for: down, exercise: .sitUp))
+        XCTAssertNil(counter.process(down))
+        XCTAssertNotNil(counter.process(up))
+    }
+
+    func testPoseOrientationCanonicalizationIsSymmetricForHeadDirection() {
+        let source = (x: 0.28, y: 0.73)
+        let leftVision = (x: source.y, y: 1 - source.x)
+        let rightVision = (x: 1 - source.y, y: source.x)
+
+        let fromHeadOnLeft = PoseAnalysisOrientation.headOnLeft.canonicalPoint(
+            x: leftVision.x,
+            y: leftVision.y
+        )
+        let fromHeadOnRight = PoseAnalysisOrientation.headOnRight.canonicalPoint(
+            x: rightVision.x,
+            y: rightVision.y
+        )
+
+        XCTAssertEqual(fromHeadOnLeft.x, source.x, accuracy: 0.0001)
+        XCTAssertEqual(fromHeadOnLeft.y, source.y, accuracy: 0.0001)
+        XCTAssertEqual(fromHeadOnRight.x, source.x, accuracy: 0.0001)
+        XCTAssertEqual(fromHeadOnRight.y, source.y, accuracy: 0.0001)
+    }
+
+    func testOrientationSelectorChoosesTheClearHorizontalDirection() {
+        var selector = PoseOrientationSelector()
+        let clear = sitUpSample(uptime: 0, isUp: false)
+        let partial = BodyPoseSample(
+            captureUptime: 0,
+            points: [.nose: point(0.4, 0.4, confidence: 0.2)],
+            personCount: 1
+        )
+
+        for _ in 0..<4 {
+            selector.observe(.upright, samples: [partial])
+            selector.observe(.headOnLeft, samples: [clear])
+            selector.observe(.headOnRight, samples: [])
+        }
+
+        XCTAssertEqual(selector.preferred, .headOnLeft)
+        XCTAssertTrue(selector.hasReliableFullPose)
+    }
+
+    func testFragmentedOrientationUsesVisualFallback() {
+        var selector = PoseOrientationSelector()
+        let fragment = BodyPoseSample(
+            captureUptime: 0,
+            points: [.neck: point(0.4, 0.4, confidence: 0.25)],
+            personCount: 2
+        )
+        for _ in 0..<12 {
+            selector.observe(.headOnLeft, samples: [fragment])
+        }
+
+        XCTAssertFalse(selector.hasReliableFullPose)
+    }
+
+    func testSitUpMotionCounterCountsFiveCyclesWithoutRepeatingAtTheTop() {
+        XCTAssertEqual(motionCount(direction: .left, mirrored: false), 5)
+    }
+
+    func testSitUpMotionCounterIsInvariantForOppositeHeadDirectionAndMirror() {
+        XCTAssertEqual(motionCount(direction: .right, mirrored: true), 5)
+    }
+
     func testPoseTrackingDebouncerIgnoresBriefLossAndRequiresStableRecovery() {
         var debouncer = PoseTrackingDebouncer()
 
@@ -619,6 +704,25 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertEqual(tracker.select(from: [largerBystander, movedPrimary], at: 0.1)?.bounds, movedPrimary.bounds)
     }
 
+    func testPartialPoseCannotMoveTheSubjectReference() {
+        var tracker = PrimaryPoseSubjectTracker()
+        let primary = sitUpSample(uptime: 0, isUp: false)
+        _ = tracker.select(from: [primary], at: 0, canUpdateReference: { _ in true })
+        let fragment = BodyPoseSample(
+            captureUptime: 0.1,
+            points: [.nose: point(0.92, 0.90)],
+            personCount: 1
+        )
+        _ = tracker.select(from: [fragment], at: 0.1, canUpdateReference: { _ in false })
+        let recovered = shifted(primary, x: 0.02, scale: 1, uptime: 0.2)
+        let bystander = shifted(primary, x: 0.40, scale: 1.1, uptime: 0.2)
+
+        XCTAssertEqual(
+            tracker.select(from: [bystander, recovered], at: 0.2, canUpdateReference: { _ in true })?.bounds,
+            recovered.bounds
+        )
+    }
+
     func testSitUpPoseQualityNeedsOnlyOneUsableSide() {
         XCTAssertNil(PoseQualityEvaluator.adjustment(for: sitUpSample(uptime: 0, isUp: false), exercise: .sitUp))
     }
@@ -655,6 +759,38 @@ final class WorkoutConfigTests: XCTestCase {
             ],
             personCount: 1
         )
+    }
+
+    private func motionCount(direction: SitUpHeadDirection, mirrored: Bool) -> Int {
+        func sample(_ uptime: TimeInterval, _ progress: Double) -> BodyPoseSample {
+            let sourceX = mirrored ? 1 - progress : progress
+            return BodyPoseSample(
+                captureUptime: uptime,
+                points: [
+                    .neck: point(sourceX, 0.55),
+                    .leftHip: point(mirrored ? 0.40 : 0.60, 0.55),
+                    .leftKnee: point(mirrored ? 0.20 : 0.80, 0.62)
+                ],
+                personCount: 1
+            )
+        }
+
+        var counter = SitUpMotionCounter()
+        let downProgress = 0.20
+        counter.calibrate(sample(0, downProgress), direction: direction)
+        counter.resetCycle(keepCalibration: true)
+        var count = 0
+        var uptime = 0.1
+        for _ in 0..<5 {
+            for progress in [downProgress, 0.26, 0.34, 0.36, 0.36, 0.30,
+                             downProgress, downProgress] {
+                if counter.process(sample(uptime, progress), direction: direction) != nil {
+                    count += 1
+                }
+                uptime += 0.1
+            }
+        }
+        return count
     }
 
     private func sitUpAngleSample(uptime: TimeInterval, angleDegrees: Double) -> BodyPoseSample {

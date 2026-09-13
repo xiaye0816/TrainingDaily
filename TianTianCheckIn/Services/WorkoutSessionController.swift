@@ -172,9 +172,6 @@ final class WorkoutSessionController: ObservableObject {
         countdownTask = Task { [weak self] in
             guard let self else { return }
             do {
-                if config.countingMode == .automatic {
-                    poseRecognition.pause()
-                }
                 for number in stride(from: 3, through: 1, by: -1) {
                     phase = .countdown(number)
                     speech.speakPriority("\(number)")

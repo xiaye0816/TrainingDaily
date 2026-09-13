@@ -429,6 +429,7 @@ final class CameraRecorder: NSObject, @unchecked Sendable {
     private func configureVideoConnections() {
         let angle = Self.rotationAngle(for: currentOrientation)
         let isFrontCamera = videoInput?.device.position == .front
+        poseAnalyzer?.updateCameraMirroring(isMirrored: isFrontCamera)
         for output in [videoOutput as AVCaptureOutput] {
             guard let connection = output.connection(with: .video) else { continue }
             if connection.isVideoRotationAngleSupported(angle) {

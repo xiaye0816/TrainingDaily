@@ -76,6 +76,31 @@ struct BodyPoseSample: Equatable, Sendable {
     }
 }
 
+enum PoseAnalysisOrientation: String, CaseIterable, Sendable {
+    case upright
+    case headOnLeft
+    case headOnRight
+
+    var imageOrientation: CGImagePropertyOrientation {
+        switch self {
+        case .upright: .up
+        case .headOnLeft: .right
+        case .headOnRight: .left
+        }
+    }
+
+    func canonicalPoint(x: Double, y: Double) -> (x: Double, y: Double) {
+        switch self {
+        case .upright:
+            (x, y)
+        case .headOnLeft:
+            (1 - y, x)
+        case .headOnRight:
+            (y, 1 - x)
+        }
+    }
+}
+
 enum PoseTrackingStatus: Equatable, Sendable {
     case inactive
     case findingPerson
@@ -126,7 +151,7 @@ enum PoseQualityEvaluator {
     struct Side: Sendable {
         let shoulder: PosePoint
         let hip: PosePoint
-        let knee: PosePoint
+        let knee: PosePoint?
         let ankle: PosePoint?
     }
 
@@ -136,7 +161,7 @@ enum PoseQualityEvaluator {
         switch exercise {
         case .sitUp:
             guard bestSide(in: sample) != nil else { return .showFullBody }
-            if max(bounds.width, bounds.height) < 0.18 { return .moveCloser }
+            if max(bounds.width, bounds.height) < 0.14 { return .moveCloser }
         case .jumpRope:
             if sample.point(.leftAnkle) == nil || sample.point(.rightAnkle) == nil { return .showFeet }
             let required: [BodyJoint] = [
@@ -156,8 +181,8 @@ enum PoseQualityEvaluator {
         let right = side(in: sample, shoulder: .rightShoulder, hip: .rightHip, knee: .rightKnee, ankle: .rightAnkle)
         switch (left, right) {
         case let (.some(left), .some(right)):
-            let leftConfidence = left.shoulder.confidence + left.hip.confidence + left.knee.confidence + (left.ankle?.confidence ?? 0)
-            let rightConfidence = right.shoulder.confidence + right.hip.confidence + right.knee.confidence + (right.ankle?.confidence ?? 0)
+            let leftConfidence = left.shoulder.confidence + left.hip.confidence + (left.knee?.confidence ?? 0) + (left.ankle?.confidence ?? 0)
+            let rightConfidence = right.shoulder.confidence + right.hip.confidence + (right.knee?.confidence ?? 0) + (right.ankle?.confidence ?? 0)
             return leftConfidence >= rightConfidence ? left : right
         case let (.some(left), .none): return left
         case let (.none, .some(right)): return right
@@ -175,17 +200,57 @@ enum PoseQualityEvaluator {
         // Hands behind the head and loose hair frequently hide a shoulder
         // during sit-ups. Prefer the requested shoulder, but keep the torso
         // usable through a neck/head landmark when that shoulder is weak.
-        guard let shoulderPoint = sample.point(shoulder, minimumConfidence: 0.18)
-                ?? sample.point(.neck, minimumConfidence: 0.18)
-                ?? sample.point(.nose, minimumConfidence: 0.25),
-              let hipPoint = sample.point(hip, minimumConfidence: 0.18),
-              let kneePoint = sample.point(knee, minimumConfidence: 0.18) else { return nil }
+        guard let shoulderPoint = sample.point(shoulder, minimumConfidence: 0.12)
+                ?? sample.point(.neck, minimumConfidence: 0.15)
+                ?? sample.point(.nose, minimumConfidence: 0.20),
+              let hipPoint = sample.point(hip, minimumConfidence: 0.12)
+                ?? sample.point(.root, minimumConfidence: 0.15)
+                ?? strongestPoint(in: sample, joints: [.leftHip, .rightHip], minimumConfidence: 0.12)
+        else { return nil }
         return Side(
             shoulder: shoulderPoint,
             hip: hipPoint,
-            knee: kneePoint,
-            ankle: sample.point(ankle, minimumConfidence: 0.18)
+            knee: sample.point(knee, minimumConfidence: 0.12)
+                ?? strongestPoint(in: sample, joints: [.leftKnee, .rightKnee], minimumConfidence: 0.12),
+            ankle: sample.point(ankle, minimumConfidence: 0.12)
         )
+    }
+
+    static func sitUpAnalysisScore(for sample: BodyPoseSample) -> Double {
+        guard let side = bestSide(in: sample), let bounds = sample.bounds else { return 0 }
+        let confidence = side.shoulder.confidence + side.hip.confidence
+            + (side.knee?.confidence ?? 0) * 0.6
+        let completeness = side.knee == nil ? 0.65 : 1.0
+        let size = min(1, max(bounds.width, bounds.height) / 0.35)
+        return confidence * completeness * (0.65 + size * 0.35)
+    }
+
+    static func sitUpUpperPoint(in sample: BodyPoseSample) -> PosePoint? {
+        if let neck = sample.point(.neck, minimumConfidence: 0.12) {
+            return neck
+        }
+        if let left = sample.point(.leftShoulder, minimumConfidence: 0.12),
+           let right = sample.point(.rightShoulder, minimumConfidence: 0.12) {
+            return PosePoint(
+                x: (left.x + right.x) / 2,
+                y: (left.y + right.y) / 2,
+                confidence: min(left.confidence, right.confidence)
+            )
+        }
+        return strongestPoint(
+            in: sample,
+            joints: [.leftShoulder, .rightShoulder],
+            minimumConfidence: 0.12
+        ) ?? sample.point(.nose, minimumConfidence: 0.20)
+    }
+
+    private static func strongestPoint(
+        in sample: BodyPoseSample,
+        joints: [BodyJoint],
+        minimumConfidence: Double
+    ) -> PosePoint? {
+        joints.compactMap { sample.point($0, minimumConfidence: minimumConfidence) }
+            .max(by: { $0.confidence < $1.confidence })
     }
 
 }
@@ -199,24 +264,39 @@ struct PrimaryPoseSubjectTracker {
         lastSeenUptime = nil
     }
 
-    mutating func select(from samples: [BodyPoseSample], at captureUptime: TimeInterval) -> BodyPoseSample? {
+    mutating func select(
+        from samples: [BodyPoseSample],
+        at captureUptime: TimeInterval,
+        canUpdateReference: (BodyPoseSample) -> Bool = { _ in true }
+    ) -> BodyPoseSample? {
         guard !samples.isEmpty else { return nil }
 
         let selected: BodyPoseSample?
         if let trackedBounds,
            let lastSeenUptime,
-           captureUptime - lastSeenUptime <= 0.75 {
-            selected = samples
+           captureUptime - lastSeenUptime <= 1.2 {
+            let matched = samples
                 .map { ($0, trackingScore(candidate: $0.bounds, target: trackedBounds)) }
-                .filter { $0.1 >= 0.35 }
+                .filter { $0.1 >= 0.18 }
                 .max(by: { $0.1 < $1.1 })?.0
+            // Vision can briefly collapse a horizontal body into a small torso
+            // fragment. With only one candidate, keep returning it so quality
+            // debouncing can bridge the gap, but never let it move the identity
+            // reference unless it is a usable body pose.
+            let onlyCandidate = samples.count == 1 ? samples[0] : nil
+            let looselyMatched = onlyCandidate.flatMap {
+                trackingScore(candidate: $0.bounds, target: trackedBounds) >= 0.08 ? $0 : nil
+            }
+            selected = matched ?? looselyMatched
         } else {
             selected = samples.max(by: { initialScore($0) < initialScore($1) })
         }
 
         guard let selected, let bounds = selected.bounds else { return nil }
-        trackedBounds = bounds
-        lastSeenUptime = captureUptime
+        if canUpdateReference(selected) {
+            trackedBounds = bounds
+            lastSeenUptime = captureUptime
+        }
         return selected
     }
 
@@ -243,12 +323,326 @@ struct PrimaryPoseSubjectTracker {
     }
 }
 
+struct PoseOrientationSelector {
+    private(set) var scores: [PoseAnalysisOrientation: Double] = [:]
+
+    mutating func reset() {
+        scores = [:]
+    }
+
+    mutating func observe(
+        _ orientation: PoseAnalysisOrientation,
+        samples: [BodyPoseSample]
+    ) {
+        let best = samples.map(PoseQualityEvaluator.sitUpAnalysisScore).max() ?? 0
+        let fragmentationPenalty = samples.count > 1 ? 0.82 : 1.0
+        let observed = best * fragmentationPenalty
+        let previous = scores[orientation] ?? 0
+        scores[orientation] = previous * 0.72 + observed * 0.28
+    }
+
+    var preferred: PoseAnalysisOrientation {
+        PoseAnalysisOrientation.allCases.max {
+            (scores[$0] ?? 0) < (scores[$1] ?? 0)
+        } ?? .upright
+    }
+
+    var preferredSideways: PoseAnalysisOrientation {
+        [PoseAnalysisOrientation.headOnLeft, .headOnRight].max {
+            (scores[$0] ?? 0) < (scores[$1] ?? 0)
+        } ?? .headOnLeft
+    }
+
+    var hasReliableFullPose: Bool {
+        (scores[preferred] ?? 0) >= 0.65
+    }
+}
+
+enum SitUpHeadDirection: String, Sendable {
+    case left
+    case right
+
+    func progress(for point: PosePoint) -> Double {
+        switch self {
+        case .left: point.x
+        case .right: -point.x
+        }
+    }
+}
+
+struct SitUpMotionCounter {
+    private enum Phase: Equatable {
+        case readyForUp
+        case waitingForDown
+    }
+
+    private var phase = Phase.readyForUp
+    private var direction: SitUpHeadDirection?
+    private var downProgress: Double?
+    private var bodyScale = 0.40
+    private var previousProgress: Double?
+    private var previousUpperPoint: PosePoint?
+    private var previousUptime: TimeInterval?
+    private var filteredProgress: Double?
+    private var risingEvidenceUptime: TimeInterval?
+    private var downStartedUptime: TimeInterval?
+    private var postRepPeakProgress: Double?
+    private var minimumProgressSinceRep: Double?
+    private var hasDescentEvidence = false
+    private var lastRepUptime = -Double.infinity
+    private(set) var diagnosticDetail = "uncalibrated"
+
+    mutating func calibrate(_ sample: BodyPoseSample, direction: SitUpHeadDirection) {
+        guard let upper = PoseQualityEvaluator.sitUpUpperPoint(in: sample) else { return }
+        setDirection(direction)
+        let progress = direction.progress(for: upper)
+        updateBodyScale(from: sample)
+        if let downProgress {
+            if progress < downProgress {
+                self.downProgress = max(progress, downProgress - 0.035)
+            } else if progress - downProgress < riseThreshold * 0.45 {
+                self.downProgress = downProgress * 0.92 + progress * 0.08
+            }
+        } else {
+            downProgress = progress
+        }
+        previousProgress = progress
+        previousUpperPoint = upper
+        previousUptime = sample.captureUptime
+        filteredProgress = progress
+    }
+
+    mutating func process(
+        _ sample: BodyPoseSample,
+        direction: SitUpHeadDirection
+    ) -> RepDetection? {
+        guard let upper = PoseQualityEvaluator.sitUpUpperPoint(in: sample) else { return nil }
+        setDirection(direction)
+        updateBodyScale(from: sample)
+        if let previousUpperPoint,
+           let previousUptime,
+           sample.captureUptime - previousUptime < 0.30,
+           upper.distance(to: previousUpperPoint) > 0.18 {
+            return nil
+        }
+        previousUpperPoint = upper
+        previousUptime = sample.captureUptime
+        let rawProgress = direction.progress(for: upper)
+        let progress = filteredProgress.map { $0 * 0.52 + rawProgress * 0.48 } ?? rawProgress
+        filteredProgress = progress
+        guard let downProgress else {
+            self.downProgress = progress
+            previousProgress = progress
+            return nil
+        }
+
+        let progressDelta = previousProgress.map { progress - $0 } ?? 0
+        if progressDelta >= 0.008 {
+            risingEvidenceUptime = sample.captureUptime
+        }
+        self.previousProgress = progress
+        let displacement = progress - downProgress
+        diagnosticDetail = String(
+            format: "progress=%.3f,baseline=%.3f,displacement=%.3f,threshold=%.3f,phase=%@",
+            progress,
+            downProgress,
+            displacement,
+            riseThreshold,
+            phase == .readyForUp ? "ready" : "waitingDown"
+        )
+
+        switch phase {
+        case .readyForUp:
+            if displacement <= riseThreshold * 0.45 {
+                self.downProgress = self.downProgress.map { min($0, progress) } ?? progress
+            }
+            guard displacement >= riseThreshold,
+                  let risingEvidenceUptime,
+                  sample.captureUptime - risingEvidenceUptime <= 0.25,
+                  sample.captureUptime - lastRepUptime >= 0.45 else { return nil }
+            phase = .waitingForDown
+            downStartedUptime = nil
+            postRepPeakProgress = progress
+            minimumProgressSinceRep = progress
+            hasDescentEvidence = false
+            lastRepUptime = sample.captureUptime
+            return RepDetection(
+                captureUptime: sample.captureUptime,
+                exercise: .sitUp,
+                confidence: min(0.82, max(0.45, upper.confidence))
+            )
+        case .waitingForDown:
+            postRepPeakProgress = max(postRepPeakProgress ?? progress, progress)
+            let dropFromPeak = (postRepPeakProgress ?? progress) - progress
+            if !hasDescentEvidence,
+               dropFromPeak >= riseThreshold * 1.20 {
+                hasDescentEvidence = true
+                minimumProgressSinceRep = progress
+            }
+            guard hasDescentEvidence else { return nil }
+            minimumProgressSinceRep = min(minimumProgressSinceRep ?? progress, progress)
+            let localMinimum = minimumProgressSinceRep ?? progress
+            let isClearlyBackDown = displacement <= riseThreshold * 0.50
+                || (dropFromPeak >= riseThreshold * 1.20 && progress - localMinimum <= 0.018)
+            let hasStartedNextRise = progress - localMinimum >= 0.010
+                && progressDelta >= 0.006
+
+            if hasStartedNextRise {
+                phase = .readyForUp
+                self.downProgress = localMinimum
+                risingEvidenceUptime = sample.captureUptime
+                downStartedUptime = nil
+                postRepPeakProgress = nil
+                minimumProgressSinceRep = nil
+                hasDescentEvidence = false
+                return nil
+            }
+            guard isClearlyBackDown else {
+                downStartedUptime = nil
+                return nil
+            }
+            if downStartedUptime == nil {
+                downStartedUptime = sample.captureUptime
+                return nil
+            }
+            guard sample.captureUptime - (downStartedUptime ?? sample.captureUptime) >= 0.10 else {
+                return nil
+            }
+            phase = .readyForUp
+            self.downProgress = min(downProgress, progress)
+            risingEvidenceUptime = nil
+            downStartedUptime = nil
+            postRepPeakProgress = nil
+            minimumProgressSinceRep = nil
+            hasDescentEvidence = false
+            return nil
+        }
+    }
+
+    mutating func resetCycle(keepCalibration: Bool) {
+        phase = .readyForUp
+        previousProgress = nil
+        previousUpperPoint = nil
+        previousUptime = nil
+        filteredProgress = nil
+        risingEvidenceUptime = nil
+        downStartedUptime = nil
+        postRepPeakProgress = nil
+        minimumProgressSinceRep = nil
+        hasDescentEvidence = false
+        if !keepCalibration {
+            direction = nil
+            downProgress = nil
+            bodyScale = 0.40
+        }
+    }
+
+    private var riseThreshold: Double {
+        min(0.11, max(0.060, bodyScale * 0.18))
+    }
+
+    private mutating func setDirection(_ next: SitUpHeadDirection) {
+        guard direction != next else { return }
+        direction = next
+        downProgress = nil
+        phase = .readyForUp
+        previousProgress = nil
+        previousUpperPoint = nil
+        previousUptime = nil
+        filteredProgress = nil
+        risingEvidenceUptime = nil
+        downStartedUptime = nil
+        postRepPeakProgress = nil
+        minimumProgressSinceRep = nil
+        hasDescentEvidence = false
+    }
+
+    private mutating func updateBodyScale(from sample: BodyPoseSample) {
+        guard let side = PoseQualityEvaluator.bestSide(in: sample) else { return }
+        let torso = side.shoulder.distance(to: side.hip)
+        let lower = side.knee.map { side.hip.distance(to: $0) } ?? torso * 0.8
+        let measured = min(0.65, max(0.20, torso + lower))
+        bodyScale = bodyScale * 0.8 + measured * 0.2
+    }
+}
+
+final class SitUpVisualTracker {
+    private var sequenceHandler = VNSequenceRequestHandler()
+    private var observation: VNDetectedObjectObservation?
+
+    var isTracking: Bool { observation != nil }
+
+    func reset() {
+        observation = nil
+        sequenceHandler = VNSequenceRequestHandler()
+    }
+
+    func seed(from sample: BodyPoseSample) -> Bool {
+        guard let upper = PoseQualityEvaluator.sitUpUpperPoint(in: sample),
+              let bounds = sample.bounds else { return false }
+        let span = max(bounds.width, bounds.height)
+        let width = min(0.30, max(0.18, span * 0.50))
+        let height = min(0.28, max(0.16, span * 0.45))
+        let center: (x: Double, y: Double) = {
+            guard let side = PoseQualityEvaluator.bestSide(in: sample) else {
+                return (upper.x, upper.y)
+            }
+            let dx = side.hip.x - upper.x
+            let direction = dx == 0 ? 0 : dx / abs(dx)
+            let inset = min(0.03, abs(dx) * 0.15)
+            return (upper.x + direction * inset, upper.y)
+        }()
+        let rect = CGRect(
+            x: min(max(center.x - width / 2, 0), 1 - width),
+            y: min(max(center.y - height / 2, 0), 1 - height),
+            width: width,
+            height: height
+        )
+        sequenceHandler = VNSequenceRequestHandler()
+        observation = VNDetectedObjectObservation(boundingBox: rect)
+        return true
+    }
+
+    func track(
+        pixelBuffer: CVPixelBuffer,
+        captureUptime: TimeInterval
+    ) -> BodyPoseSample? {
+        guard let observation else { return nil }
+        let request = VNTrackObjectRequest(detectedObjectObservation: observation)
+        request.trackingLevel = .accurate
+        do {
+            try sequenceHandler.perform([request], on: pixelBuffer, orientation: .up)
+            guard let result = request.results?.first as? VNDetectedObjectObservation,
+                  result.confidence >= 0.25 else {
+                reset()
+                return nil
+            }
+            self.observation = result
+            let bounds = result.boundingBox
+            return BodyPoseSample(
+                captureUptime: captureUptime,
+                points: [
+                    .neck: PosePoint(
+                        x: bounds.midX,
+                        y: bounds.midY,
+                        confidence: Double(result.confidence)
+                    )
+                ],
+                personCount: 1
+            )
+        } catch {
+            reset()
+            return nil
+        }
+    }
+}
+
 struct SitUpRepCounter {
     struct Thresholds {
-        var downMaximumTorsoAngle = 32.0
+        var downMaximumTorsoAngle = 18.0
         var downMaximumShoulderHeight = 0.18
-        var upMinimumTorsoAngle = 30.0
-        var minimumShoulderRise = 0.10
+        var upMinimumTorsoAngle = 20.0
+        var minimumShoulderRise = 0.07
         var downStableSampleCount = 1
         var minimumRepInterval = 0.45
         var inferredDownMinimumLossDuration = 0.25
@@ -283,7 +677,9 @@ struct SitUpRepCounter {
         guard let side = PoseQualityEvaluator.bestSide(in: sample) else {
             return nil
         }
-        let bodyScale = max(side.shoulder.distance(to: side.hip) + side.hip.distance(to: side.knee), 0.08)
+        let torsoLength = side.shoulder.distance(to: side.hip)
+        let lowerBodyLength = side.knee.map { side.hip.distance(to: $0) } ?? torsoLength * 0.8
+        let bodyScale = max(torsoLength + lowerBodyLength, 0.08)
         let rawAngle = abs(atan2(side.shoulder.y - side.hip.y, side.shoulder.x - side.hip.x))
         let torsoAngle = min(rawAngle, abs(.pi - rawAngle)) * 180 / .pi
         let shoulderHeight = (side.shoulder.y - side.hip.y) / bodyScale
@@ -291,8 +687,9 @@ struct SitUpRepCounter {
             && shoulderHeight <= thresholds.downMaximumShoulderHeight
         let hipDisplacement = downHip.map { side.hip.distance(to: $0) / max(downBodyScale, 0.08) } ?? 0
         let bodyAlignedStanding: Bool = {
+            guard let knee = side.knee else { return false }
             let first = CGVector(dx: side.shoulder.x - side.hip.x, dy: side.shoulder.y - side.hip.y)
-            let second = CGVector(dx: side.knee.x - side.hip.x, dy: side.knee.y - side.hip.y)
+            let second = CGVector(dx: knee.x - side.hip.x, dy: knee.y - side.hip.y)
             let lengths = hypot(first.dx, first.dy) * hypot(second.dx, second.dy)
             guard lengths > 0.0001 else { return false }
             let cosine = min(1, max(-1, (first.dx * second.dx + first.dy * second.dy) / lengths))
@@ -351,7 +748,7 @@ struct SitUpRepCounter {
             lastRepUptime = sample.captureUptime
             postRepPeakAngle = torsoAngle
             descentEvidenceUptime = nil
-            let confidencePoints = [side.shoulder, side.hip, side.knee] + [side.ankle].compactMap { $0 }
+            let confidencePoints = [side.shoulder, side.hip] + [side.knee, side.ankle].compactMap { $0 }
             let confidence = confidencePoints
                 .map(\.confidence)
                 .reduce(0, +) / Double(confidencePoints.count)
@@ -629,6 +1026,20 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     private var lastPoseQualityDetail: String?
     private var processedFrameTimes: [TimeInterval] = []
     private var didResetForCurrentLoss = false
+    private var orientationSelector = PoseOrientationSelector()
+    private var activeOrientation = PoseAnalysisOrientation.upright
+    private var analysisFrameIndex = 0
+    private var lastPrimaryUsableUptime = -Double.infinity
+    private var alternateRecoveryCounts: [PoseAnalysisOrientation: Int] = [:]
+    private var lastOrientationScoreLog: [PoseAnalysisOrientation: TimeInterval] = [:]
+    private var cameraIsMirrored = false
+    private var sitUpMotionCounter = SitUpMotionCounter()
+    private let sitUpVisualTracker = SitUpVisualTracker()
+    private var inferredHeadDirection: SitUpHeadDirection?
+    private var activeHeadDirection = SitUpHeadDirection.left
+    private var prefersVisualSitUpCounting = false
+    private var lastEmittedRepUptime = -Double.infinity
+    private var lastMotionDiagnosticUptime = -Double.infinity
     private let submissionLock = NSLock()
     private var hasPendingFrame = false
 
@@ -674,11 +1085,32 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         captureQueue.async { [weak self] in
             guard let self else { return }
             counter = ExerciseCounter(exercise: exercise)
+            activeOrientation = exercise == .sitUp ? orientationSelector.preferred : .upright
+            activeHeadDirection = resolvedHeadDirection()
+            prefersVisualSitUpCounting = exercise == .sitUp
+                && !orientationSelector.hasReliableFullPose
+            sitUpMotionCounter.resetCycle(keepCalibration: true)
+            lastEmittedRepUptime = -Double.infinity
             mode = .counting(activeStartUptime: activeStartUptime)
             processedFrameTimes = []
             trackingDebouncer.reset()
             didResetForCurrentLoss = false
+            lastPrimaryUsableUptime = activeStartUptime
+            alternateRecoveryCounts = [:]
+            diagnosticsRecorder?.recordEvent(
+                "orientation_selected",
+                detail: "orientation=\(activeOrientation.rawValue),mirrored=\(cameraIsMirrored),counter=\(prefersVisualSitUpCounting ? "visual" : "pose")",
+                uptime: activeStartUptime
+            )
             emit(.tracking)
+        }
+    }
+
+    func updateCameraMirroring(isMirrored: Bool) {
+        captureQueue.async { [weak self] in
+            guard let self else { return }
+            cameraIsMirrored = isMirrored
+            diagnosticsRecorder?.recordEvent("camera_mirroring", detail: "mirrored=\(isMirrored)")
         }
     }
 
@@ -727,6 +1159,19 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         lastPoseQualityDetail = nil
         processedFrameTimes = []
         didResetForCurrentLoss = false
+        orientationSelector.reset()
+        activeOrientation = .upright
+        analysisFrameIndex = 0
+        lastPrimaryUsableUptime = -Double.infinity
+        alternateRecoveryCounts = [:]
+        lastOrientationScoreLog = [:]
+        sitUpMotionCounter = SitUpMotionCounter()
+        sitUpVisualTracker.reset()
+        inferredHeadDirection = nil
+        activeHeadDirection = .left
+        prefersVisualSitUpCounting = false
+        lastEmittedRepUptime = -Double.infinity
+        lastMotionDiagnosticUptime = -Double.infinity
     }
 
     private func emit(_ status: PoseTrackingStatus) {
@@ -744,14 +1189,70 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         lastAnalyzedUptime = captureUptime
 
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up)
+        if case .counting = mode {
+            recordProcessedFrame(at: captureUptime)
+        }
+
+        let shouldUseVisualTracker: Bool = {
+            guard exercise == .sitUp, sitUpVisualTracker.isTracking else { return false }
+            if case .framing = mode { return true }
+            return prefersVisualSitUpCounting
+        }()
+        if shouldUseVisualTracker {
+            processVisualTrackingFrame(pixelBuffer, captureUptime: captureUptime)
+            // Object tracking is deliberately kept at the full 15 fps. It is
+            // much cheaper than pose estimation and needs the temporal density
+            // to avoid drifting during fast repetitions. Refresh the skeleton
+            // every third frame to validate/reseed the tracked subject.
+            guard analysisFrameIndex % 3 == 0 else {
+                analysisFrameIndex += 1
+                return
+            }
+        }
+
+        let orientation = nextAnalysisOrientation(at: captureUptime)
+        let handler = VNImageRequestHandler(
+            cvPixelBuffer: pixelBuffer,
+            orientation: orientation.imageOrientation
+        )
         do {
             try handler.perform([request])
             let observations = request.results ?? []
-            handleObservations(observations, captureUptime: captureUptime)
+            handleObservations(
+                observations,
+                orientation: orientation,
+                captureUptime: captureUptime
+            )
         } catch {
-            diagnosticsRecorder?.recordEvent("vision_error", detail: error.localizedDescription, uptime: captureUptime)
-            handleMissingPose(at: captureUptime, detail: "vision_error")
+            diagnosticsRecorder?.recordEvent(
+                "vision_error",
+                detail: "orientation=\(orientation.rawValue),error=\(error.localizedDescription)",
+                uptime: captureUptime
+            )
+            handleMissingPose(
+                at: captureUptime,
+                detail: "vision_error,orientation=\(orientation.rawValue)"
+            )
+        }
+    }
+
+    private func nextAnalysisOrientation(at captureUptime: TimeInterval) -> PoseAnalysisOrientation {
+        defer { analysisFrameIndex += 1 }
+        guard exercise == .sitUp else { return .upright }
+        switch mode {
+        case .framing:
+            return PoseAnalysisOrientation.allCases[analysisFrameIndex % PoseAnalysisOrientation.allCases.count]
+        case .counting:
+            if captureUptime - lastPrimaryUsableUptime > 0.35 {
+                return PoseAnalysisOrientation.allCases[analysisFrameIndex % PoseAnalysisOrientation.allCases.count]
+            }
+            let sidewaysFallback = orientationSelector.preferredSideways
+            let pattern = activeOrientation == .upright
+                ? [PoseAnalysisOrientation.upright, .upright, sidewaysFallback]
+                : [activeOrientation, activeOrientation, .upright]
+            return pattern[analysisFrameIndex % pattern.count]
+        case .inactive:
+            return .upright
         }
     }
 
@@ -767,16 +1268,96 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         return seconds
     }
 
-    private func handleObservations(_ observations: [VNHumanBodyPoseObservation], captureUptime: TimeInterval) {
-        let samples = observations.compactMap { makeSample(from: $0, captureUptime: captureUptime, personCount: observations.count) }
+    private func processVisualTrackingFrame(
+        _ pixelBuffer: CVPixelBuffer,
+        captureUptime: TimeInterval
+    ) {
+        guard let sample = sitUpVisualTracker.track(
+            pixelBuffer: pixelBuffer,
+            captureUptime: captureUptime
+        ) else {
+            diagnosticsRecorder?.recordEvent(
+                "visual_tracker_lost",
+                uptime: captureUptime
+            )
+            handleMissingPose(at: captureUptime, detail: "visual_tracker_lost")
+            return
+        }
+
+        switch mode {
+        case .framing:
+            sitUpMotionCounter.calibrate(sample, direction: resolvedHeadDirection())
+            if framingHasUsableSubject {
+                emit(.ready)
+            }
+        case let .counting(activeStartUptime):
+            guard case .counting = mode, captureUptime >= activeStartUptime else { return }
+            didResetForCurrentLoss = false
+            emitPoseQuality("visual_tracking", uptime: captureUptime)
+            if trackingDebouncer.noteUsable() == .tracking {
+                emit(.tracking)
+            }
+            let detection = sitUpMotionCounter.process(
+                sample,
+                direction: activeHeadDirection
+            )
+            if captureUptime - lastMotionDiagnosticUptime >= 0.5 {
+                lastMotionDiagnosticUptime = captureUptime
+                diagnosticsRecorder?.recordEvent(
+                    "sit_up_motion",
+                    detail: "direction=\(activeHeadDirection.rawValue),\(sitUpMotionCounter.diagnosticDetail)",
+                    uptime: captureUptime
+                )
+            }
+            if prefersVisualSitUpCounting {
+                emitDetectionIfNeeded(detection)
+            }
+        case .inactive:
+            break
+        }
+    }
+
+    private func handleObservations(
+        _ observations: [VNHumanBodyPoseObservation],
+        orientation: PoseAnalysisOrientation,
+        captureUptime: TimeInterval
+    ) {
+        let samples = observations.compactMap {
+            makeSample(
+                from: $0,
+                orientation: orientation,
+                captureUptime: captureUptime,
+                personCount: observations.count
+            )
+        }
+        if exercise == .sitUp {
+            orientationSelector.observe(orientation, samples: samples)
+            logOrientationScoreIfNeeded(orientation, samples: samples, uptime: captureUptime)
+        }
         switch mode {
         case .framing:
             request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
-            let tracked = subjectTracker.select(from: samples, at: captureUptime)
+            let tracked = subjectTracker.select(
+                from: samples,
+                at: captureUptime,
+                canUpdateReference: { PoseQualityEvaluator.adjustment(for: $0, exercise: self.exercise) == nil }
+            )
             let selected = tracked.flatMap {
                 PoseQualityEvaluator.adjustment(for: $0, exercise: exercise) == nil ? $0 : nil
             }
             diagnosticsRecorder?.recordPose(samples: samples, selected: selected)
+            if exercise == .sitUp, let tracked {
+                updateInferredHeadDirection(from: tracked)
+                if !sitUpVisualTracker.isTracking,
+                   PoseQualityEvaluator.adjustment(for: tracked, exercise: .sitUp) == nil,
+                   sitUpVisualTracker.seed(from: tracked) {
+                    diagnosticsRecorder?.recordEvent(
+                        "visual_tracker_seeded",
+                        detail: "direction=\(resolvedHeadDirection().rawValue)",
+                        uptime: captureUptime
+                    )
+                }
+            }
             if selected != nil {
                 framingHasUsableSubject = true
             }
@@ -787,31 +1368,68 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
                 emit(guidanceCandidate.flatMap { PoseQualityEvaluator.adjustment(for: $0, exercise: exercise) } ?? .findingPerson)
             }
         case let .counting(activeStartUptime):
-            recordProcessedFrame(at: captureUptime)
             guard case .counting = mode else { return }
             guard captureUptime >= activeStartUptime else { return }
-            guard let tracked = subjectTracker.select(from: samples, at: captureUptime) else {
+            guard let tracked = subjectTracker.select(
+                from: samples,
+                at: captureUptime,
+                canUpdateReference: { PoseQualityEvaluator.adjustment(for: $0, exercise: self.exercise) == nil }
+            ) else {
                 diagnosticsRecorder?.recordPose(samples: samples, selected: nil)
                 handleMissingPose(
                     at: captureUptime,
-                    detail: samples.isEmpty ? "no_person" : "subject_not_matched"
+                    detail: (samples.isEmpty ? "no_person" : "subject_not_matched")
+                        + ",orientation=\(orientation.rawValue)"
                 )
                 return
             }
+            let hasStableUpperBody: Bool
+            if exercise == .sitUp,
+               PoseQualityEvaluator.sitUpUpperPoint(in: tracked) != nil {
+                hasStableUpperBody = true
+                if !sitUpVisualTracker.isTracking,
+                   PoseQualityEvaluator.adjustment(for: tracked, exercise: .sitUp) == nil,
+                   sitUpVisualTracker.seed(from: tracked) {
+                    diagnosticsRecorder?.recordEvent(
+                        "visual_tracker_seeded",
+                        detail: "direction=\(activeHeadDirection.rawValue)",
+                        uptime: captureUptime
+                    )
+                }
+                noteUsableOrientation(orientation, at: captureUptime)
+                didResetForCurrentLoss = false
+                if trackingDebouncer.noteUsable() == .tracking {
+                    emit(.tracking)
+                }
+            } else {
+                hasStableUpperBody = false
+            }
+
             guard PoseQualityEvaluator.adjustment(for: tracked, exercise: exercise) == nil else {
                 diagnosticsRecorder?.recordPose(samples: samples, selected: tracked)
-                handleMissingPose(at: captureUptime, detail: "partial_pose")
+                if hasStableUpperBody {
+                    emitPoseQuality(
+                        "upper_body_fallback,orientation=\(orientation.rawValue)",
+                        uptime: captureUptime
+                    )
+                    return
+                }
+                handleMissingPose(
+                    at: captureUptime,
+                    detail: "partial_pose,orientation=\(orientation.rawValue)"
+                )
                 return
             }
             diagnosticsRecorder?.recordPose(samples: samples, selected: tracked)
+            noteUsableOrientation(orientation, at: captureUptime)
             didResetForCurrentLoss = false
-            emitPoseQuality("usable", uptime: captureUptime)
+            emitPoseQuality("usable,orientation=\(orientation.rawValue)", uptime: captureUptime)
             if trackingDebouncer.noteUsable() == .tracking {
                 emit(.tracking)
             }
-            if let detection = counter.process(tracked) {
-                diagnosticsRecorder?.recordEvent("rep_detected", detail: "confidence=\(detection.confidence)", uptime: detection.captureUptime)
-                detectionHandler?(detection)
+            if exercise != .sitUp || !prefersVisualSitUpCounting {
+                let poseDetection = counter.process(tracked)
+                emitDetectionIfNeeded(poseDetection)
             }
         case .inactive:
             break
@@ -823,7 +1441,6 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         case .framing:
             emit(framingHasUsableSubject ? .ready : .findingPerson)
         case .counting:
-            recordProcessedFrame(at: captureUptime)
             counter.notePoseUnavailable(at: captureUptime)
             emitPoseQuality(detail, uptime: captureUptime)
             if trackingDebouncer.noteMissing(at: captureUptime) == .lost {
@@ -832,6 +1449,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             guard trackingDebouncer.isShowingLost else { return }
             if !didResetForCurrentLoss {
                 counter.resetCycle()
+                sitUpMotionCounter.resetCycle(keepCalibration: true)
                 didResetForCurrentLoss = true
             }
             request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -847,6 +1465,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     }
 
     private func recordProcessedFrame(at captureUptime: TimeInterval) {
+        guard processedFrameTimes.last != captureUptime else { return }
         processedFrameTimes.append(captureUptime)
         processedFrameTimes.removeAll { captureUptime - $0 > 2 }
         guard let first = processedFrameTimes.first,
@@ -860,6 +1479,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
 
     private func makeSample(
         from observation: VNHumanBodyPoseObservation,
+        orientation: PoseAnalysisOrientation,
         captureUptime: TimeInterval,
         personCount: Int
     ) -> BodyPoseSample? {
@@ -874,14 +1494,85 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         var points: [BodyJoint: PosePoint] = [:]
         for (joint, visionName) in mapping {
             guard let point = try? observation.recognizedPoint(visionName), point.confidence >= 0.05 else { continue }
-            points[joint] = PosePoint(
+            let canonical = orientation.canonicalPoint(
                 x: Double(point.location.x),
-                y: Double(point.location.y),
+                y: Double(point.location.y)
+            )
+            points[joint] = PosePoint(
+                x: canonical.x,
+                y: canonical.y,
                 confidence: Double(point.confidence)
             )
         }
         guard !points.isEmpty else { return nil }
         return BodyPoseSample(captureUptime: captureUptime, points: points, personCount: personCount)
+    }
+
+    private func noteUsableOrientation(
+        _ orientation: PoseAnalysisOrientation,
+        at captureUptime: TimeInterval
+    ) {
+        guard exercise == .sitUp else { return }
+        if orientation == activeOrientation {
+            lastPrimaryUsableUptime = captureUptime
+            alternateRecoveryCounts = [:]
+            return
+        }
+        guard captureUptime - lastPrimaryUsableUptime > 0.35 else { return }
+        alternateRecoveryCounts[orientation, default: 0] += 1
+        guard alternateRecoveryCounts[orientation, default: 0] >= 2 else { return }
+        activeOrientation = orientation
+        lastPrimaryUsableUptime = captureUptime
+        alternateRecoveryCounts = [:]
+        diagnosticsRecorder?.recordEvent(
+            "orientation_switched",
+            detail: "orientation=\(orientation.rawValue),mirrored=\(cameraIsMirrored)",
+            uptime: captureUptime
+        )
+    }
+
+    private func updateInferredHeadDirection(from sample: BodyPoseSample) {
+        guard let side = PoseQualityEvaluator.bestSide(in: sample),
+              abs(side.shoulder.x - side.hip.x) >= 0.04 else { return }
+        inferredHeadDirection = side.shoulder.x < side.hip.x ? .left : .right
+    }
+
+    private func resolvedHeadDirection() -> SitUpHeadDirection {
+        let leftScore = orientationSelector.scores[.headOnLeft] ?? 0
+        let rightScore = orientationSelector.scores[.headOnRight] ?? 0
+        if max(leftScore, rightScore) >= 0.08,
+           abs(leftScore - rightScore) >= 0.03 {
+            return leftScore > rightScore ? .left : .right
+        }
+        return inferredHeadDirection
+            ?? (orientationSelector.preferredSideways == .headOnLeft ? .left : .right)
+    }
+
+    private func emitDetectionIfNeeded(_ detection: RepDetection?) {
+        guard let detection,
+              detection.captureUptime - lastEmittedRepUptime >= 0.45 else { return }
+        lastEmittedRepUptime = detection.captureUptime
+        diagnosticsRecorder?.recordEvent(
+            "rep_detected",
+            detail: "confidence=\(detection.confidence),direction=\(activeHeadDirection.rawValue)",
+            uptime: detection.captureUptime
+        )
+        detectionHandler?(detection)
+    }
+
+    private func logOrientationScoreIfNeeded(
+        _ orientation: PoseAnalysisOrientation,
+        samples: [BodyPoseSample],
+        uptime: TimeInterval
+    ) {
+        guard uptime - (lastOrientationScoreLog[orientation] ?? -Double.infinity) >= 1 else { return }
+        lastOrientationScoreLog[orientation] = uptime
+        let score = samples.map(PoseQualityEvaluator.sitUpAnalysisScore).max() ?? 0
+        diagnosticsRecorder?.recordEvent(
+            "orientation_score",
+            detail: "orientation=\(orientation.rawValue),score=\(String(format: "%.3f", score)),people=\(samples.count)",
+            uptime: uptime
+        )
     }
 }
 
