@@ -172,14 +172,19 @@ enum PoseQualityEvaluator {
         knee: BodyJoint,
         ankle: BodyJoint
     ) -> Side? {
-        guard let shoulderPoint = sample.point(shoulder),
-              let hipPoint = sample.point(hip),
-              let kneePoint = sample.point(knee) else { return nil }
+        // Hands behind the head and loose hair frequently hide a shoulder
+        // during sit-ups. Prefer the requested shoulder, but keep the torso
+        // usable through a neck/head landmark when that shoulder is weak.
+        guard let shoulderPoint = sample.point(shoulder, minimumConfidence: 0.18)
+                ?? sample.point(.neck, minimumConfidence: 0.18)
+                ?? sample.point(.nose, minimumConfidence: 0.25),
+              let hipPoint = sample.point(hip, minimumConfidence: 0.18),
+              let kneePoint = sample.point(knee, minimumConfidence: 0.18) else { return nil }
         return Side(
             shoulder: shoulderPoint,
             hip: hipPoint,
             knee: kneePoint,
-            ankle: sample.point(ankle)
+            ankle: sample.point(ankle, minimumConfidence: 0.18)
         )
     }
 
@@ -244,8 +249,13 @@ struct SitUpRepCounter {
         var downMaximumShoulderHeight = 0.18
         var upMinimumTorsoAngle = 30.0
         var minimumShoulderRise = 0.10
-        var downStableSampleCount = 2
+        var downStableSampleCount = 1
         var minimumRepInterval = 0.45
+        var inferredDownMinimumLossDuration = 0.25
+        var inferredDownMaximumLossDuration = 1.2
+        var descendingAngleDrop = 12.0
+        var descendingMaximumAngle = 48.0
+        var descentEvidenceLifetime = 0.5
     }
 
     private enum Phase {
@@ -260,6 +270,9 @@ struct SitUpRepCounter {
     private var downHip: PosePoint?
     private var downBodyScale = 0.1
     private var downShoulderHeight = 0.0
+    private var postRepPeakAngle = 0.0
+    private var descentEvidenceUptime: TimeInterval?
+    private var poseUnavailableSince: TimeInterval?
     private let thresholds: Thresholds
 
     init(thresholds: Thresholds = Thresholds()) {
@@ -290,6 +303,36 @@ struct SitUpRepCounter {
             && shoulderHeight - downShoulderHeight >= thresholds.minimumShoulderRise
             && !isStanding
 
+        let unavailableDuration = poseUnavailableSince.map { sample.captureUptime - $0 }
+        poseUnavailableSince = nil
+
+        if case .waitingForDown = phase {
+            postRepPeakAngle = max(postRepPeakAngle, torsoAngle)
+            if torsoAngle <= thresholds.descendingMaximumAngle,
+               postRepPeakAngle - torsoAngle >= thresholds.descendingAngleDrop {
+                descentEvidenceUptime = sample.captureUptime
+            }
+
+            // When the body reaches the bed, the hands and hair can hide the
+            // torso. Infer that down transition only if a descent was already
+            // visible before a short gap. Reappearing by itself never arms a
+            // new repetition.
+            if let unavailableDuration,
+               unavailableDuration >= thresholds.inferredDownMinimumLossDuration,
+               unavailableDuration <= thresholds.inferredDownMaximumLossDuration,
+               let descentEvidenceUptime,
+               sample.captureUptime - descentEvidenceUptime <= thresholds.descentEvidenceLifetime + unavailableDuration,
+               torsoAngle <= thresholds.descendingMaximumAngle {
+                phase = .readyForUp
+                downHip = side.hip
+                downBodyScale = bodyScale
+                downShoulderHeight = min(shoulderHeight, thresholds.downMaximumShoulderHeight)
+                stableSamples = 0
+                self.descentEvidenceUptime = nil
+                return nil
+            }
+        }
+
         switch phase {
         case .seekingDown, .waitingForDown:
             stableSamples = isDown ? stableSamples + 1 : 0
@@ -306,6 +349,8 @@ struct SitUpRepCounter {
             phase = .waitingForDown
             stableSamples = 0
             lastRepUptime = sample.captureUptime
+            postRepPeakAngle = torsoAngle
+            descentEvidenceUptime = nil
             let confidencePoints = [side.shoulder, side.hip, side.knee] + [side.ankle].compactMap { $0 }
             let confidence = confidencePoints
                 .map(\.confidence)
@@ -315,11 +360,20 @@ struct SitUpRepCounter {
         return nil
     }
 
+    mutating func notePoseUnavailable(at uptime: TimeInterval) {
+        if poseUnavailableSince == nil {
+            poseUnavailableSince = uptime
+        }
+    }
+
     mutating func resetCycle() {
         phase = .seekingDown
         stableSamples = 0
         downHip = nil
         downShoulderHeight = 0
+        postRepPeakAngle = 0
+        descentEvidenceUptime = nil
+        poseUnavailableSince = nil
     }
 }
 
@@ -487,6 +541,65 @@ private enum ExerciseCounter {
             self = .jumpRope(counter)
         }
     }
+
+    mutating func notePoseUnavailable(at uptime: TimeInterval) {
+        switch self {
+        case var .sitUp(counter):
+            counter.notePoseUnavailable(at: uptime)
+            self = .sitUp(counter)
+        case .jumpRope:
+            break
+        }
+    }
+}
+
+struct PoseTrackingDebouncer {
+    enum Transition: Equatable {
+        case none
+        case lost
+        case tracking
+    }
+
+    private(set) var isShowingLost = false
+    private var lossStartedUptime: TimeInterval?
+    private var recoverySampleCount = 0
+    private let lossGraceDuration: TimeInterval
+    private let requiredRecoverySamples: Int
+
+    init(lossGraceDuration: TimeInterval = 1.2, requiredRecoverySamples: Int = 2) {
+        self.lossGraceDuration = lossGraceDuration
+        self.requiredRecoverySamples = requiredRecoverySamples
+    }
+
+    mutating func noteMissing(at uptime: TimeInterval) -> Transition {
+        if lossStartedUptime == nil {
+            lossStartedUptime = uptime
+        }
+        recoverySampleCount = 0
+        guard !isShowingLost,
+              uptime - (lossStartedUptime ?? uptime) >= lossGraceDuration else { return .none }
+        isShowingLost = true
+        return .lost
+    }
+
+    mutating func noteUsable() -> Transition {
+        lossStartedUptime = nil
+        guard isShowingLost else {
+            recoverySampleCount = 0
+            return .none
+        }
+        recoverySampleCount += 1
+        guard recoverySampleCount >= requiredRecoverySamples else { return .none }
+        isShowingLost = false
+        recoverySampleCount = 0
+        return .tracking
+    }
+
+    mutating func reset() {
+        isShowingLost = false
+        lossStartedUptime = nil
+        recoverySampleCount = 0
+    }
 }
 
 final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
@@ -512,7 +625,8 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
     private var framingHasUsableSubject = false
     private var subjectTracker = PrimaryPoseSubjectTracker()
     private var lastAnalyzedUptime = -Double.infinity
-    private var lastValidPoseUptime: TimeInterval?
+    private var trackingDebouncer = PoseTrackingDebouncer()
+    private var lastPoseQualityDetail: String?
     private var processedFrameTimes: [TimeInterval] = []
     private var didResetForCurrentLoss = false
     private let submissionLock = NSLock()
@@ -562,7 +676,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             counter = ExerciseCounter(exercise: exercise)
             mode = .counting(activeStartUptime: activeStartUptime)
             processedFrameTimes = []
-            lastValidPoseUptime = nil
+            trackingDebouncer.reset()
             didResetForCurrentLoss = false
             emit(.tracking)
         }
@@ -609,7 +723,8 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         framingHasUsableSubject = false
         subjectTracker.reset()
         lastAnalyzedUptime = -Double.infinity
-        lastValidPoseUptime = nil
+        trackingDebouncer.reset()
+        lastPoseQualityDetail = nil
         processedFrameTimes = []
         didResetForCurrentLoss = false
     }
@@ -636,7 +751,7 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             handleObservations(observations, captureUptime: captureUptime)
         } catch {
             diagnosticsRecorder?.recordEvent("vision_error", detail: error.localizedDescription, uptime: captureUptime)
-            handleMissingPose(at: captureUptime)
+            handleMissingPose(at: captureUptime, detail: "vision_error")
         }
     }
 
@@ -654,12 +769,13 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
 
     private func handleObservations(_ observations: [VNHumanBodyPoseObservation], captureUptime: TimeInterval) {
         let samples = observations.compactMap { makeSample(from: $0, captureUptime: captureUptime, personCount: observations.count) }
-        let usableSamples = samples.filter { PoseQualityEvaluator.adjustment(for: $0, exercise: exercise) == nil }
-
         switch mode {
         case .framing:
             request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
-            let selected = subjectTracker.select(from: usableSamples, at: captureUptime)
+            let tracked = subjectTracker.select(from: samples, at: captureUptime)
+            let selected = tracked.flatMap {
+                PoseQualityEvaluator.adjustment(for: $0, exercise: exercise) == nil ? $0 : nil
+            }
             diagnosticsRecorder?.recordPose(samples: samples, selected: selected)
             if selected != nil {
                 framingHasUsableSubject = true
@@ -674,16 +790,26 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
             recordProcessedFrame(at: captureUptime)
             guard case .counting = mode else { return }
             guard captureUptime >= activeStartUptime else { return }
-            guard let selected = subjectTracker.select(from: usableSamples, at: captureUptime) else {
+            guard let tracked = subjectTracker.select(from: samples, at: captureUptime) else {
                 diagnosticsRecorder?.recordPose(samples: samples, selected: nil)
-                handleMissingPose(at: captureUptime)
+                handleMissingPose(
+                    at: captureUptime,
+                    detail: samples.isEmpty ? "no_person" : "subject_not_matched"
+                )
                 return
             }
-            diagnosticsRecorder?.recordPose(samples: samples, selected: selected)
-            lastValidPoseUptime = captureUptime
+            guard PoseQualityEvaluator.adjustment(for: tracked, exercise: exercise) == nil else {
+                diagnosticsRecorder?.recordPose(samples: samples, selected: tracked)
+                handleMissingPose(at: captureUptime, detail: "partial_pose")
+                return
+            }
+            diagnosticsRecorder?.recordPose(samples: samples, selected: tracked)
             didResetForCurrentLoss = false
-            emit(.tracking)
-            if let detection = counter.process(selected) {
+            emitPoseQuality("usable", uptime: captureUptime)
+            if trackingDebouncer.noteUsable() == .tracking {
+                emit(.tracking)
+            }
+            if let detection = counter.process(tracked) {
                 diagnosticsRecorder?.recordEvent("rep_detected", detail: "confidence=\(detection.confidence)", uptime: detection.captureUptime)
                 detectionHandler?(detection)
             }
@@ -692,23 +818,32 @@ final class PoseRecognitionEngine: NSObject, @unchecked Sendable {
         }
     }
 
-    private func handleMissingPose(at captureUptime: TimeInterval) {
+    private func handleMissingPose(at captureUptime: TimeInterval, detail: String = "no_person") {
         switch mode {
         case .framing:
             emit(framingHasUsableSubject ? .ready : .findingPerson)
         case .counting:
             recordProcessedFrame(at: captureUptime)
-            emit(.lost)
-            if let lastValidPoseUptime, captureUptime - lastValidPoseUptime > 0.5, !didResetForCurrentLoss {
+            counter.notePoseUnavailable(at: captureUptime)
+            emitPoseQuality(detail, uptime: captureUptime)
+            if trackingDebouncer.noteMissing(at: captureUptime) == .lost {
+                emit(.lost)
+            }
+            guard trackingDebouncer.isShowingLost else { return }
+            if !didResetForCurrentLoss {
                 counter.resetCycle()
                 didResetForCurrentLoss = true
             }
-            if let lastValidPoseUptime, captureUptime - lastValidPoseUptime > 1 {
-                request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
-            }
+            request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 1)
         case .inactive:
             break
         }
+    }
+
+    private func emitPoseQuality(_ detail: String, uptime: TimeInterval) {
+        guard detail != lastPoseQualityDetail else { return }
+        lastPoseQualityDetail = detail
+        diagnosticsRecorder?.recordEvent("pose_quality", detail: detail, uptime: uptime)
     }
 
     private func recordProcessedFrame(at captureUptime: TimeInterval) {

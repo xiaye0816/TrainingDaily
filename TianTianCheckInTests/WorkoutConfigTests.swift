@@ -383,6 +383,80 @@ final class WorkoutConfigTests: XCTestCase {
         XCTAssertNil(counter.process(earlyRise))
     }
 
+    func testSitUpCounterReplaysSixRepsWithBriefOcclusion() {
+        var counter = SitUpRepCounter()
+        var detections = 0
+        func feed(_ uptime: TimeInterval, _ angle: Double) {
+            if counter.process(sitUpAngleSample(uptime: uptime, angleDegrees: angle)) != nil {
+                detections += 1
+            }
+        }
+
+        feed(0.00, 8)
+        feed(0.40, 38)
+
+        feed(0.55, 56)
+        feed(0.85, 41)
+        counter.notePoseUnavailable(at: 0.95)
+        counter.notePoseUnavailable(at: 1.20)
+        feed(1.45, 31)
+        feed(1.55, 45)
+
+        feed(2.00, 7)
+        feed(2.35, 42)
+        feed(2.80, 9)
+        feed(3.15, 44)
+        feed(3.60, 12)
+        feed(3.95, 46)
+        feed(4.40, 8)
+        feed(4.75, 43)
+
+        XCTAssertEqual(detections, 6)
+    }
+
+    func testSitUpCounterDoesNotCountBareRecoveryAfterOcclusion() {
+        var counter = SitUpRepCounter()
+        XCTAssertNil(counter.process(sitUpAngleSample(uptime: 0, angleDegrees: 8)))
+        XCTAssertNotNil(counter.process(sitUpAngleSample(uptime: 0.5, angleDegrees: 42)))
+        XCTAssertNil(counter.process(sitUpAngleSample(uptime: 0.65, angleDegrees: 55)))
+        counter.notePoseUnavailable(at: 0.8)
+        counter.notePoseUnavailable(at: 1.1)
+
+        XCTAssertNil(counter.process(sitUpAngleSample(uptime: 1.3, angleDegrees: 54)))
+        XCTAssertNil(counter.process(sitUpAngleSample(uptime: 1.4, angleDegrees: 56)))
+    }
+
+    func testSitUpPoseFallsBackToNeckWhenShouldersAreOccluded() {
+        let sample = BodyPoseSample(
+            captureUptime: 0,
+            points: [
+                .neck: point(0.25, 0.20, confidence: 0.7),
+                .leftHip: point(0.50, 0.20, confidence: 0.4),
+                .leftKnee: point(0.65, 0.38, confidence: 0.5)
+            ],
+            personCount: 1
+        )
+
+        XCTAssertNotNil(PoseQualityEvaluator.bestSide(in: sample))
+        XCTAssertNil(PoseQualityEvaluator.adjustment(for: sample, exercise: .sitUp))
+    }
+
+    func testPoseTrackingDebouncerIgnoresBriefLossAndRequiresStableRecovery() {
+        var debouncer = PoseTrackingDebouncer()
+
+        XCTAssertEqual(debouncer.noteMissing(at: 0), .none)
+        XCTAssertEqual(debouncer.noteMissing(at: 1.19), .none)
+        XCTAssertEqual(debouncer.noteUsable(), .none)
+        XCTAssertFalse(debouncer.isShowingLost)
+
+        XCTAssertEqual(debouncer.noteMissing(at: 2), .none)
+        XCTAssertEqual(debouncer.noteMissing(at: 3.2), .lost)
+        XCTAssertTrue(debouncer.isShowingLost)
+        XCTAssertEqual(debouncer.noteUsable(), .none)
+        XCTAssertEqual(debouncer.noteUsable(), .tracking)
+        XCTAssertFalse(debouncer.isShowingLost)
+    }
+
     func testAutomaticStartPreferencePersists() throws {
         var config = WorkoutConfig.default
         config.autoStartWhenPersonReady = false
@@ -576,6 +650,25 @@ final class WorkoutConfigTests: XCTestCase {
             points: [
                 .leftShoulder: shoulder,
                 .leftHip: point(0.50, 0.20),
+                .leftKnee: point(0.65, 0.38),
+                .leftAnkle: point(0.78, 0.12)
+            ],
+            personCount: 1
+        )
+    }
+
+    private func sitUpAngleSample(uptime: TimeInterval, angleDegrees: Double) -> BodyPoseSample {
+        let radians = angleDegrees * .pi / 180
+        let hip = point(0.50, 0.20)
+        let shoulder = point(
+            hip.x - cos(radians) * 0.25,
+            hip.y + sin(radians) * 0.25
+        )
+        return BodyPoseSample(
+            captureUptime: uptime,
+            points: [
+                .leftShoulder: shoulder,
+                .leftHip: hip,
                 .leftKnee: point(0.65, 0.38),
                 .leftAnkle: point(0.78, 0.12)
             ],
